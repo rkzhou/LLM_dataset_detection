@@ -53,14 +53,9 @@ def calculate_match_score(dict):
 
 def generate_answers(args):
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    # select_category_list = ["open_qa", "brainstorming"]
-    # filtered_dataset = dataset.filter(lambda x: x['category'] in select_category_list)
-    # filtered_dataset = filtered_dataset.filter(lambda x: len(x['response'].split(" ")) > 5)
+    select_category_list = ["open_qa"]
+    dataset = dataset.filter(lambda x: x['category'] in select_category_list)
 
-    # dataset = utils.get_dataset("tatsu-lab/alpaca", "../dataset/alpaca.pkl")
-    # filtered_dataset = dataset.filter(lambda x: x['input'] == '')
-
-    # filtered_dataset = utils.get_dataset("Open-Orca/OpenOrca", "../dataset/OpenOrca.pkl")
     data_group_num = math.ceil(len(dataset["train"]) / args["batch_size"])
 
     ### initialize model or pipeline
@@ -93,8 +88,6 @@ def generate_answers(args):
         ### check if answers have been already saved
         for i in range(args["batch_size"]):
             data_index = group_index * args["batch_size"] + i
-            if data_index >= len(dataset["train"]):
-                exit()
             if os.path.exists("{}/answer_{}.pkl".format(args["answer_root"], data_index)):
                 saved_answer_num += 1
                 current_group_saved_answer_num += 1
@@ -120,14 +113,20 @@ def generate_answers(args):
                 similarity_score = cos_simi(benchmark_tfidf, model_tfidf).item()
 
                 model_scores.append(similarity_score)
+            if data_index >= len(dataset["train"]):
+                print("Reach the end of dataset")
+                model_scores = numpy.array(model_scores)
+                scores_tensor = torch.flatten(torch.Tensor(model_scores))
+                torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
+                exit()
         if current_group_saved_answer_num == args["batch_size"]:
             current_group_complete = True
         
-        if saved_answer_num >= (args["early_stop_num"] - 1) and args["early_stop_flag"] == True:
+        if saved_answer_num >= args["early_stop_num"] and args["early_stop_flag"] == True:
             model_scores = numpy.array(model_scores)
             scores_tensor = torch.flatten(torch.Tensor(model_scores))
             torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
-            break
+            exit()
         elif current_group_complete == True:
             continue
 

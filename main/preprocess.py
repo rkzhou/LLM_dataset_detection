@@ -65,67 +65,80 @@ class Chatmodel_1(model_base):
     {"role": "user", "content": ""},
     ]
 
+    ------Alpaca format-------
     ### Instruction:
-    <prompt>
+    {instruction}
+
+    ### Input:
+    {input}
 
     ### Response:
-
     '''
 
     def __init__(self, name=None):
         super().__init__(name)
     
-    def preprocess_prompt(self, input):
-        prompt_prefix = "### Instruction:\n"
-        prompt_content = ""
-        for i in range(len(input)):
-            prompt_content += input[i]["content"]
-            if i != (len(input) - 1):
-                prompt_content += ""
-        prompt_suffix = "\n\n### Response:\n"
+    def preprocess_prompt(self, inputs):
+        prompt_prefix0 = "### Instruction:\n"
+        prompt_prefix1 = "### Input:\n"
+        prompt_prefix2 = "### Response:\n"
 
-        prompt = prompt_prefix + prompt_content + prompt_suffix
-        prompt = self.tokenizer(prompt, return_tensors="pt").input_ids
-        prompt = prompt.to("cuda")
+        prompt_list = list()
+        for input in inputs:
+            system_message, user_prompt = "", ""
+            for i in range(len(input)):
+                if input[i]["role"] == "system":
+                    system_message = input[i]["content"]
+                elif input[i]["role"] == "user":
+                    user_prompt = input[i]["content"]
+            
+            prompt = "{}{}\n\n{}{}\n\n{}\n".format(prompt_prefix0, user_prompt, prompt_prefix1, system_message, prompt_prefix2)
+            prompt_list.append(prompt)
+
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)
+        encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
         
-        return prompt
+        return encoded_inputs
     
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        best_response = responses[0]
 
-        return best_response
+        return responses
 
 
 class Chatmodel_2(model_base):
     '''
-    <|system|>system message</s><|prompter|>user prompt</s><|assistant|>
+    <|system|> system message <|user|> user prompt <|model|>
     '''
 
     def __init__(self, name=None):
         super().__init__(name)
     
-    def preprocess_prompt(self, input):
-        system_message, user_prompt = None, None
-        for i in range(len(input)):
-            if input[i]["role"] == "system":
-                system_message = input[i]["content"]
-            elif input[i]["role"] == "user":
-                user_prompt = input[i]["content"]
-        
-        prompt = f"""<|system|>{system_message}</s><|prompter|>{user_prompt}</s><|assistant|>"""
-        prompt = self.tokenizer(prompt, return_tensors="pt").input_ids
-        prompt = prompt.to("cuda")
+    def preprocess_prompt(self, inputs):
+        prompt_list = list()
+        for input in inputs:
+            system_message, user_prompt = "", ""
+            for i in range(len(input)):
+                if input[i]["role"] == "system":
+                    system_message = input[i]["content"]
+                elif input[i]["role"] == "user":
+                    user_prompt = input[i]["content"]
+            
+            prompt = "<|system|> {} <|user|> {} <|model|>".format(system_message, user_prompt)
+            prompt_list.append(prompt)
 
-        return prompt
+        
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)
+        encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
+
+        return encoded_inputs
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        best_response = responses[0]
 
-        return best_response
+        return responses
     
 
 class Chatmodel_3(model_base):
@@ -137,7 +150,7 @@ class Chatmodel_3(model_base):
         super().__init__(name)
     
     def preprocess_prompt(self, input):
-        system_message, user_prompt = None, None
+        system_message, user_prompt = "", ""
         for i in range(len(input)):
             if input[i]["role"] == "system":
                 system_message = input[i]["content"]
@@ -170,7 +183,7 @@ class Chatmodel_4(model_base):
     def preprocess_prompt(self, inputs):    
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = None, None
+            system_message, user_prompt = "", ""
             for i in range(len(input)):
                 if input[i]["role"] == "system":
                     system_message = input[i]["content"]

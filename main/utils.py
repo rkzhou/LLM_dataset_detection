@@ -37,5 +37,6 @@ def get_pretrained_model_and_tokenizer(model_id):
     )
     model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", quantization_config=bnb_config, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, padding_side="left")
+    tokenizer.pad_token = tokenizer.eos_token
 
     return model, tokenizer
