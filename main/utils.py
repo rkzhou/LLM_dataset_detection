@@ -7,6 +7,13 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 def save_hf_dataset(dataset_name, save_path):
     dataset = load_dataset(dataset_name)
+    dataset_save_root = save_path.split("/")
+    dataset_save_root = dataset_save_root[:-1]
+    dataset_save_root = os.path.join(*dataset_save_root)
+
+    if not os.path.exists(dataset_save_root):
+        os.makedirs(dataset_save_root)
+    
     with open(save_path, 'wb') as file:
         pickle.dump(dataset, file)
     return dataset

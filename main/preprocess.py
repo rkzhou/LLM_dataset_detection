@@ -203,3 +203,32 @@ class Chatmodel_4(model_base):
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
+
+
+class Chatmodel_5(model_base):
+    def __init__(self, name=None):
+        super().__init__(name)
+    
+    def preprocess_prompt(self, inputs):    
+        prompt_list = list()
+        for input in inputs:
+            system_message, user_prompt = "", ""
+            for i in range(len(input)):
+                if input[i]["role"] == "system":
+                    system_message = input[i]["content"]
+                elif input[i]["role"] == "user":
+                    user_prompt = input[i]["content"]
+        
+            prompt = f"""<|user|>\n{system_message} {user_prompt}\n<|assistant|>\n"""
+            prompt_list.append(prompt)
+        
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)
+        encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
+
+        return encoded_inputs
+
+    def generate_response(self, prompt):
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+
+        return responses

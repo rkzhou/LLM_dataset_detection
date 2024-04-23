@@ -63,20 +63,17 @@ def generate_answers(args):
         pipeline_tokenizer = AutoTokenizer.from_pretrained(args["model_name"], padding_side="left")
         pipe = pipeline(model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["batch_size"], tokenizer=pipeline_tokenizer)
     elif args["model_type"] == "kernel":
-        if args["model_template"] == 0:
-            llm_model = preprocess.Chatmodel_0(args["model_name"])
-        elif args["model_template"] == 1:
-            llm_model = preprocess.Chatmodel_1(args["model_name"])
-        elif args["model_template"] == 2:
-            llm_model = preprocess.Chatmodel_2(args["model_name"])
-        elif args["model_template"] == 3:
-            llm_model = preprocess.Chatmodel_3(args["model_name"])
-        elif args["model_template"] == 4:
-            llm_model = preprocess.Chatmodel_4(args["model_name"])
+        valid_model_template = [index for index in range(6)]
+        if args["model_template"] in valid_model_template:
+            function_to_call = "Chatmodel_{}".format(args["model_template"])
+            llm_model = getattr(preprocess, function_to_call)(args["model_name"])
         else:
             raise ValueError("Invalid Model Template")
     else:
         raise ValueError("Invalid Model Type")
+    
+    if not os.path.exists(args["answer_root"]):
+        os.makedirs(args["answer_root"])
 
     model_scores = list()
     cos_simi = torch.nn.CosineSimilarity(dim=0)
