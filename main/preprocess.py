@@ -206,6 +206,12 @@ class Chatmodel_4(model_base):
 
 
 class Chatmodel_5(model_base):
+    '''
+    <|user|>
+    Your message here!
+    <|assistant|>
+
+    '''
     def __init__(self, name=None):
         super().__init__(name)
     

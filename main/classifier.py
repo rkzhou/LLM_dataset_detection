@@ -34,11 +34,17 @@ def split_dataset(dataset, split_ratio):
     return train_dataset, test_dataset
 
 
-def format_dataset(data):
+def format_dataset(data, flag):
     prompt_prefix = "From the list: [closed_qa, open_qa, general_qa, classification, information_extraction, brainstorming, summarization, creative_writing], please categorize the following question. The question is: "
     response_prefix = "The category for the given question is only "
-    data["classifier_prompt"] = "<s>[INST] {}{} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
-    data["classifier_response"] = "{}{}</s> ".format(response_prefix, data["category"])
+    
+    if flag == "train":
+        data["classifier_prompt"] = "<s>[INST] {}{} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
+        data["classifier_response"] = "{}{}</s> ".format(response_prefix, data["category"])
+    elif flag == "test":
+        data["classifier_prompt"] = "<s>[INST] {}{} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
+    else:
+        raise ValueError("Invalid flag attribute")
     
     return data
 
@@ -53,15 +59,6 @@ def tokenize_data(data, tokenizer):
         "labels": [-100] * len(encoded_prompt) + encoded_response,
     }
 
-    return sample
-
-
-def transform_to_tensor(data):
-    sample = {}
-    for key, value in data.items():
-        temp = torch.tensor(value, device="cuda")
-        sample.update({key: temp})
-    
     return sample
 
 
@@ -82,7 +79,7 @@ def train_model(args):
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
     random.seed(args["seed_index"])
     train_dataset, _ = split_dataset(dataset, 0.9)
-    train_dataset = train_dataset.map(format_dataset)
+    train_dataset = train_dataset.map(format_dataset, fn_kwargs={"flag": "train"})
     encoded_train_dataset = train_dataset.map(tokenize_data, batched=False, remove_columns=train_dataset.column_names, fn_kwargs={"tokenizer": classifier.tokenizer})
 
     total_num = len(encoded_train_dataset)
@@ -126,27 +123,38 @@ def test_model(args):
     if classifier.tokenizer.pad_token is None:
         classifier.tokenizer.pad_token = classifier.tokenizer.eos_token
         
-    classifier.model = peft.PeftModel.from_pretrained(classifier.model, "../model/checkpoint-2")
+    classifier.model = peft.PeftModel.from_pretrained(classifier.model, "../model/checkpoint-0")
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
     random.seed(args["seed_index"])
     _, test_dataset = split_dataset(dataset, 0.9)
-    test_dataset = test_dataset.map(format_dataset)
-    encoded_test_dataset = test_dataset.map(tokenize_data, batched=False, remove_columns=test_dataset.column_names, fn_kwargs={"tokenizer": classifier.tokenizer})
-    
-    total_num, correct_num = 0, 0
-    for i in tqdm(range(len(encoded_test_dataset))):
-        data_tensors = {key: torch.tensor(value, device="cuda").unsqueeze(0) for key, value in encoded_test_dataset[i].items()}
-        generated_ids = classifier.model.generate(**data_tensors, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
-        responses = classifier.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        
-        total_num += 1
-        if test_dataset[i]["category"] in responses[0]:
-            correct_num += 1
-    
-    correct_ratio = correct_num / total_num * 100.0
-    print(correct_ratio)
-    
+    test_dataset = test_dataset.shuffle(args["seed_index"])
+    test_dataset = test_dataset.map(format_dataset, fn_kwargs={"flag": "test"})
 
+    correct_num = 0
+    group_num = math.ceil(len(test_dataset) / args[classifier.name]["predict_batch_size"])
+    for i in tqdm(range(group_num)):
+        start_index = i * args[classifier.name]["predict_batch_size"]
+        end_index = (i + 1) * args[classifier.name]["predict_batch_size"]
+        end_index = min(len(test_dataset), end_index)
+
+        prompt_list, category_list = list(), list()
+        for j in range(start_index, end_index):
+            prompt_list.append(test_dataset[j]["classifier_prompt"])
+            category_list.append(test_dataset[j]["category"])
+        
+        encoded_inputs = classifier.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)
+        encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
+        generated_ids = classifier.model.generate(**encoded_inputs, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        responses = classifier.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        answers = classifier.pull_answer(responses, args[classifier.name]["answer_prefix"])
+
+        for j in range(len(answers)):
+            if answers[j] == category_list[j]:
+                correct_num += 1
+        
+    correct_ratio = correct_num / len(test_dataset) * 100.0
+    print(correct_ratio)
+        
 
 if __name__ == '__main__':
     with open(os.path.join("../setting", "classifier_config.yaml"), 'r') as file:

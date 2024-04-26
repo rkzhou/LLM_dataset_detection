@@ -2,10 +2,10 @@ dataset_name: "databricks/databricks-dolly-15k"
 dataset_path: "../dataset/dd_15k.pkl"
 model_type: "kernel"
 model_template: 0
-model_name: "h2oai/h2o-danube-1.8b-chat"
-batch_size: 4
+model_name: "upstage/SOLAR-10.7B-Instruct-v1.0"
+batch_size: 16
 inference_times: 3
-pull_answer_format: "<|answer|>"
-answer_root: "../answers/dd_15k/nonmem_models/h2o1.8B"
-early_stop_flag: True
+pull_answer_format: "### Assistant:\n"
+answer_root: "../answers/dd_15k/open_qa/solar10.7B"
+early_stop_flag: False
 early_stop_num: 1500

@@ -12,6 +12,8 @@ mistralai/Mistral-7B-Instruct-v0.2:
   learning_rate: 0.00002
   lr_scheduler_type: "constant"
   report_to: "wandb"
+  predict_batch_size: 16
+  answer_prefix: "[/INST] The category for the given question is only "
 
 base_lora:
   r: 8

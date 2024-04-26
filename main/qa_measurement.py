@@ -59,11 +59,27 @@ def calculate_match_score(dict):
     return bm_common_ratio, bn_common_ratio
 
 
+def thresholding_tensor(tensor_path, threshold, specific_index=None):
+    answer_tensor = torch.load(tensor_path)
+    compared_tensor = (answer_tensor > threshold)
+
+    larger_threshold_num = 0
+    if specific_index == None:
+        for i in range(compared_tensor.shape[0]):
+            if compared_tensor[i] == True:
+                larger_threshold_num += 1
+    else:
+        for i in specific_index:
+            if compared_tensor[i] == True:
+                larger_threshold_num += 1
+
+    print(larger_threshold_num)
+
 if __name__ == '__main__':
     dataset = utils.get_dataset("databricks/databricks-dolly-15k", "../dataset/dd_15k.pkl")
 
     cate_num = dict()
-    for i in range(1500):
+    for i in range(len(dataset['train'])):
         current_cate = dataset['train'][i]['category']
         if current_cate in cate_num.keys():
             cate_num[current_cate] += 1
@@ -72,53 +88,4 @@ if __name__ == '__main__':
     print(cate_num)
     print('-----------------------------')
 
-    # temp = torch.load("../answers/dd_15k/nonmem_models/solar10.7B/answer_scores.pt")
-
-    # answer_index = 3
-    # with open("../answers/dd_15k/mem_models/dolly3B/answer_{}.pkl".format(answer_index), "rb") as file:
-    #     temp = pickle.load(file)
-    # print(temp)
-
-
-    member_tensor = torch.load("../answers/dd_15k/mem_models/dolly3B/answer_scores.pt")
-    nonmember_tensor = torch.load("../answers/dd_15k/nonmem_models/solar10.7B/answer_scores.pt")
-
-    # print(member_tensor)
-    # print(nonmember_tensor)
-
-    mem_cate_num = dict()
-    mem_threshold_num = 0
-    mem_compare_threshold = (member_tensor > 0.95)
-    for i in range(mem_compare_threshold.shape[0]):
-        if mem_compare_threshold[i] == True:
-            mem_threshold_num += 1
-            current_cate = dataset['train'][i]['category']
-            if current_cate in mem_cate_num.keys():
-                mem_cate_num[current_cate] += 1
-            else:
-                mem_cate_num.update({current_cate: 1})
-    print(mem_cate_num)
-    print('-----------------------------')
-
-    nonmem_cate_num = dict()
-    nonmem_threshold_num = 0
-    nonmem_compare_threshold = (nonmember_tensor > 0.95)
-    for i in range(nonmem_compare_threshold.shape[0]):
-        if nonmem_compare_threshold[i] == True:
-            nonmem_threshold_num += 1
-            current_cate = dataset['train'][i]['category']
-            if current_cate in nonmem_cate_num.keys():
-                nonmem_cate_num[current_cate] += 1
-            else:
-                nonmem_cate_num.update({current_cate: 1})
-    print(nonmem_cate_num)
-    print(mem_threshold_num, nonmem_threshold_num)
-    
-    # num = 0
-    # for i in range(member_tensor.shape[0]):
-    #     # diff = member_tensor[i] - nonmember_tensor[i]
-    #     if member_tensor[i] >= 0.95 and nonmember_tensor[i] < 0.95:
-    #         print(i, dataset['train'][i]['category'])
-    #         print(dataset['train'][i]['instruction'], dataset['train'][i]['context'])
-    #         num += 1
-    # print(num)
+    thresholding_tensor("../answers/dd_15k/open_qa/DeciLM7B/answer_scores.pt", 0.95)
