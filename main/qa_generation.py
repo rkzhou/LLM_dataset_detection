@@ -53,7 +53,7 @@ def calculate_match_score(dict):
 
 def generate_answers(args):
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    select_category_list = ["open_qa"]
+    select_category_list = ["closed_qa"]
     dataset = dataset.filter(lambda x: x['category'] in select_category_list)
 
     data_group_num = math.ceil(len(dataset["train"]) / args["batch_size"])
