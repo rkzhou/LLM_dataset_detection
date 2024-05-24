@@ -1,19 +1,20 @@
-dataset_name: "databricks/databricks-dolly-15k"
-dataset_path: "../dataset/dd_15k.pkl"
+dataset_name: "Open-Orca/OpenOrca"
+dataset_path: "../dataset/OpenOrca.pkl"
 model_name: "mistralai/Mistral-7B-Instruct-v0.2"
 seed_index: 42
 
 mistralai/Mistral-7B-Instruct-v0.2:
-  output_dir: "../model/"
+  output_dir: "../model/open_qa/"
   per_device_train_batch_size: 32
   optim: "paged_adamw_32bit"
-  num_train_epochs: 3.0
+  num_train_epochs: 8.0
   save_strategy: "epoch"
   learning_rate: 0.00002
   lr_scheduler_type: "constant"
   report_to: "wandb"
-  predict_batch_size: 16
-  answer_prefix: "[/INST] The category for the given question is only "
+  predict_batch_size: 8
+  prediction_save_path: "../categorization"
+  answer_prefix: "[/INST] The category for the given question is "
 
 base_lora:
   r: 8

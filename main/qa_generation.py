@@ -52,11 +52,24 @@ def calculate_match_score(dict):
 
 
 def generate_answers(args):
-    dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    select_category_list = ["closed_qa"]
-    dataset = dataset.filter(lambda x: x['category'] in select_category_list)
+    if args["saved_dataset"] != None:
+        with open(args["saved_dataset"], "rb") as file:
+            dataset = pickle.load(file)
+    else:
+        dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
+    # select_category_list = ["closed_qa"]
+    # dataset = dataset.filter(lambda x: x['category'] in select_category_list)
+    if args["saved_category"] != None:
+        with open(args["saved_category"], "rb") as file:
+            data_category = pickle.load(file)
+    
+    data_selection = list()
+    for i in range(len(data_category)):
+        if data_category[i] == "qa":
+            data_selection.append(i)
+    dataset = dataset.select(data_selection)
 
-    data_group_num = math.ceil(len(dataset["train"]) / args["batch_size"])
+    data_group_num = math.ceil(len(dataset) / args["batch_size"])
 
     ### initialize model or pipeline
     if args["model_type"] == "pipeline":
@@ -91,7 +104,7 @@ def generate_answers(args):
                 with open("{}/answer_{}.pkl".format(args["answer_root"], data_index), 'rb') as file:
                     saved_model_answer = pickle.load(file)
                 
-                benchmark_answer = dataset["train"][data_index]["response"]
+                benchmark_answer = dataset[data_index]["response"]
                 benchmark_split_tokens = split_sentence(benchmark_answer)
                 model_split_tokens = split_sentence(saved_model_answer)
 
@@ -110,7 +123,7 @@ def generate_answers(args):
                 similarity_score = cos_simi(benchmark_tfidf, model_tfidf).item()
 
                 model_scores.append(similarity_score)
-            if data_index >= len(dataset["train"]):
+            if data_index >= len(dataset):
                 print("Reach the end of dataset")
                 model_scores = numpy.array(model_scores)
                 scores_tensor = torch.flatten(torch.Tensor(model_scores))
@@ -134,11 +147,11 @@ def generate_answers(args):
         ### preprocess prompt
         for i in range(args["batch_size"]):
             data_index = args["batch_size"] * group_index + i
-            if data_index < len(dataset["train"]):
-                data = dataset["train"][data_index]
+            if data_index < len(dataset):
+                data = dataset[data_index]
                 format_data = list()
-                format_data.append({"role": "system", "content": data["context"]})
-                format_data.append({"role": "user", "content": data["instruction"]})
+                format_data.append({"role": "system", "content": data["system_prompt"]})
+                format_data.append({"role": "user", "content": data["question"]})
                 raw_prompt_list.append(format_data)
                 benchmark_answer_list.append(data["response"])
         
