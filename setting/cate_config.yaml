@@ -1,8 +1,0 @@
-dataset_name: "Open-Orca/OpenOrca"
-dataset_path: "../dataset/OpenOrca.pkl"
-model_name: "mistralai/Mistral-7B-Instruct-v0.2"
-checkpoint_path: "../model/checkpoint-2"
-answer_prefix: "[/INST] The category for the given question is only "
-save_category_path: "../dataset/OpenOrca_category.pkl"
-seed_index: 42
-predict_batch_size: 16
