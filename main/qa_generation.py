@@ -52,22 +52,24 @@ def calculate_match_score(dict):
 
 
 def generate_answers(args):
-    if args["saved_dataset"] != None:
+    if args["saved_dataset"] != "None":
         with open(args["saved_dataset"], "rb") as file:
             dataset = pickle.load(file)
     else:
         dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    # select_category_list = ["closed_qa"]
-    # dataset = dataset.filter(lambda x: x['category'] in select_category_list)
-    if args["saved_category"] != None:
+    
+    if args["saved_category"] != "None":
         with open(args["saved_category"], "rb") as file:
             data_category = pickle.load(file)
     
-    data_selection = list()
-    for i in range(len(data_category)):
-        if data_category[i] == "qa":
-            data_selection.append(i)
-    dataset = dataset.select(data_selection)
+        data_selection = list()
+        for i in range(len(data_category)):
+            if data_category[i] == "qa":
+                data_selection.append(i)
+        dataset = dataset.select(data_selection)
+    else: # for dd_15k dataset
+        select_category_list = ["closed_qa", "open_qa", "general_qa"]
+        dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
 
     data_group_num = math.ceil(len(dataset) / args["batch_size"])
 
@@ -104,7 +106,14 @@ def generate_answers(args):
                 with open("{}/answer_{}.pkl".format(args["answer_root"], data_index), 'rb') as file:
                     saved_model_answer = pickle.load(file)
                 
-                benchmark_answer = dataset[data_index]["response"]
+                if args["dataset_name"] == "databricks/databricks-dolly-15k":
+                    benchmark_answer = dataset[data_index]["response"]
+                elif args["dataset_name"] == "tatsu-lab/alpaca":
+                    benchmark_answer = dataset[data_index]["output"]
+                elif args["dataset_name"] == "Open-Orca/SlimOrca":
+                    benchmark_answer = dataset[data_index]["conversations"][2]["value"]
+                elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+                    benchmark_answer = dataset[data_index]["messages"][1]["content"]
                 benchmark_split_tokens = split_sentence(benchmark_answer)
                 model_split_tokens = split_sentence(saved_model_answer)
 
@@ -150,10 +159,23 @@ def generate_answers(args):
             if data_index < len(dataset):
                 data = dataset[data_index]
                 format_data = list()
-                format_data.append({"role": "system", "content": data["system_prompt"]})
-                format_data.append({"role": "user", "content": data["question"]})
+                if args["dataset_name"] == "databricks/databricks-dolly-15k":
+                    format_data.append({"role": "system", "content": ""})
+                    format_data.append({"role": "user", "content": data["context"] + " " + data["instruction"]})
+                    benchmark_answer_list.append(data["response"])
+                elif args["dataset_name"] == "tatsu-lab/alpaca":
+                    format_data.append({"role": "system", "content": ""})
+                    format_data.append({"role": "user", "content": data["input"] + " " + data["instruction"]})
+                    benchmark_answer_list.append(data["output"])
+                elif args["dataset_name"] == "Open-Orca/SlimOrca":
+                    format_data.append({"role": "system", "content": data["conversations"][0]["value"]})
+                    format_data.append({"role": "user", "content": ["conversations"][1]["value"]})
+                    benchmark_answer_list.append(data["conversations"][2]["value"])
+                elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+                    format_data.append({"role": "system", "content": ""})
+                    format_data.append({"role": "user", "content": data["prompt"]})
+                    benchmark_answer_list.append(data["messages"][1]["content"])
                 raw_prompt_list.append(format_data)
-                benchmark_answer_list.append(data["response"])
         
         ### split benchmark answers into tokens
         benchmark_split_token_list, model_split_token_list = list(), list()
@@ -168,7 +190,7 @@ def generate_answers(args):
                 for prompt in raw_prompt_list:
                     input_prompt = prompt[0]["content"] + prompt[1]["content"]
                     pipeline_prompt_list.append(input_prompt)
-                response = pipe(pipeline_prompt_list, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+                response = pipe(pipeline_prompt_list, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
                 current_time_model_answers = list()
                 for i in range(len(response)):
                     answer = response[i][0]["generated_text"]

@@ -45,19 +45,25 @@ def change_category_value(example, flag, label):
 
 def format_dataset(data, dataset, flag, target_category):
     non_target_category = "non_{}".format(target_category)
-    prompt_prefix = "Please judge the following question is a {} question or {} question. The question is: ".format(target_category, non_target_category)
+    prompt_prefix = "Please judge the following question is a {} question or {} question. The question is:".format(target_category, non_target_category)
     response_prefix = "The category for the given question is "
 
     if dataset == "dd_15k":
         if flag == "train":
-            data["classifier_prompt"] = "<s>[INST] {}{} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
+            data["classifier_prompt"] = "<s>[INST] {} {} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
             data["classifier_response"] = "{}{}</s> ".format(response_prefix, data["category"])
         elif flag == "test":
-            data["classifier_prompt"] = "<s>[INST] {}{} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
+            data["classifier_prompt"] = "<s>[INST] {} {} {} [/INST]".format(prompt_prefix, data["context"], data["instruction"])
         else:
             raise ValueError("Invalid flag attribute")
-    elif dataset == "OpenOrca":
-        data["classifier_prompt"] = "<s>[INST] {}{} {} [/INST]".format(prompt_prefix, "", data["question"])
+    elif dataset == "alpaca":
+        data["classifier_prompt"] = "<s>[INST] {} {} {} [/INST]".format(prompt_prefix, data["instruction"], data["input"])
+    elif dataset == "slimorca":
+        data["classifier_prompt"] = "<s>[INST] {} {} [/INST]".format(prompt_prefix, data["conversations"][1]["value"])
+    elif dataset == "ultrafeedback":
+        data["classifier_prompt"] = "<s>[INST] {} {} [/INST]".format(prompt_prefix, data["prompt"])
+    else:
+        raise ValueError("Invalid dataset name")
     
     return data
 
@@ -147,7 +153,7 @@ def test_model(args):
     if classifier.tokenizer.pad_token is None:
         classifier.tokenizer.pad_token = classifier.tokenizer.eos_token
         
-    classifier.model = peft.PeftModel.from_pretrained(classifier.model, "../model/test/checkpoint-1612")
+    classifier.model = peft.PeftModel.from_pretrained(classifier.model, "../model/all_qa/checkpoint-2015")
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
     random.seed(args["seed_index"])
     select_categories = ["closed_qa", "open_qa", "general_qa"]
@@ -166,10 +172,10 @@ def test_model(args):
 
     TP, FN = 0, 0
     FP, TN = 0, 0
-    group_num = math.ceil(len(test_dataset) / args[classifier.name]["predict_batch_size"])
+    group_num = math.ceil(len(test_dataset) / args["predict_batch_size"])
     for i in tqdm(range(group_num)):
-        start_index = i * args[classifier.name]["predict_batch_size"]
-        end_index = (i + 1) * args[classifier.name]["predict_batch_size"]
+        start_index = i * args["predict_batch_size"]
+        end_index = (i + 1) * args["predict_batch_size"]
         end_index = min(len(test_dataset), end_index)
 
         prompt_list, category_list = list(), list()
@@ -211,19 +217,38 @@ def predict_model(args):
     if classifier.tokenizer.pad_token is None:
         classifier.tokenizer.pad_token = classifier.tokenizer.eos_token
         
-    classifier.model = peft.PeftModel.from_pretrained(classifier.model, "../model/test/checkpoint-1209")
+    classifier.model = peft.PeftModel.from_pretrained(classifier.model, "../model/all_qa/checkpoint-2015")
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
+    if args["dataset_name"] == "databricks/databricks-dolly-15k":
+        dataset = dataset["train"]
+    elif args["dataset_name"] == "tatsu-lab/alpaca":
+        dataset = dataset["train"]
+    elif args["dataset_name"] == "Open-Orca/SlimOrca":
+        dataset = dataset["train"]
+    elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+        dataset = dataset["train_sft"]
+
     random.seed(args["seed_index"])
     
     dataset = dataset.shuffle(args["seed_index"])
-    dataset = dataset["train"].select([i for i in range(1000)])
-    dataset = dataset.map(format_dataset, fn_kwargs={"dataset": "OpenOrca", "flag": "test", "target_category": "qa"})
-    group_num = math.ceil(len(dataset) / args[classifier.name]["predict_batch_size"])
+    dataset = dataset.select([i for i in range(15000)])
+    
+    if not os.path.exists(args["prediction_save_root"]):
+        os.mkdir(args["prediction_save_root"])
+    
+    save_suffix = args["dataset_path"].split("/")[-1].replace(".pkl", "")
+    selected_data_save_path = args["prediction_save_root"] + save_suffix + "_selected_datasets.pkl"
+
+    with open(selected_data_save_path, "wb") as file:
+        pickle.dump(dataset, file)
+    
+    dataset = dataset.map(format_dataset, fn_kwargs={"dataset": save_suffix, "flag": "test", "target_category": "qa"})
+    group_num = math.ceil(len(dataset) / args["predict_batch_size"])
     
     all_prompt_list, all_answer_list = list(), list()
     for i in tqdm(range(group_num)):
-        start_index = i * args[classifier.name]["predict_batch_size"]
-        end_index = (i + 1) * args[classifier.name]["predict_batch_size"]
+        start_index = i * args["predict_batch_size"]
+        end_index = (i + 1) * args["predict_batch_size"]
         end_index = min(len(dataset), end_index)
         prompt_list = list()
         for j in range(start_index, end_index):
@@ -238,18 +263,18 @@ def predict_model(args):
         all_prompt_list += prompt_list
         all_answer_list += answers
     
-    with open("./new_OpenOrca_prompts.pkl", "wb") as file:
+    prediction_prompts_save_path = args["prediction_save_root"] + save_suffix + "_prompts.pkl"
+    with open(prediction_prompts_save_path, "wb") as file:
         pickle.dump(all_prompt_list, file)
-    file.close()
     
-    with open("./new_OpenOrca_answers.pkl", "wb") as file:
+    prediction_answers_save_path = args["prediction_save_root"] + save_suffix + "_answers.pkl"
+    with open(prediction_answers_save_path, "wb") as file:
         pickle.dump(all_answer_list, file)
-    file.close()
 
 
 if __name__ == '__main__':
     with open(os.path.join("../setting", "classifier_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
     # train_model(global_cfg)
-    test_model(global_cfg)
-    # predict_model(global_cfg)
+    # test_model(global_cfg)
+    predict_model(global_cfg)

@@ -52,7 +52,7 @@ class Chatmodel_0(model_base):
         return encoded_inputs
     
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
@@ -101,7 +101,7 @@ class Chatmodel_1(model_base):
         return encoded_inputs
     
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
@@ -135,7 +135,7 @@ class Chatmodel_2(model_base):
         return encoded_inputs
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
@@ -149,26 +149,29 @@ class Chatmodel_3(model_base):
     def __init__(self, name=None):
         super().__init__(name)
     
-    def preprocess_prompt(self, input):
-        system_message, user_prompt = "", ""
-        for i in range(len(input)):
-            if input[i]["role"] == "system":
-                system_message = input[i]["content"]
-            elif input[i]["role"] == "user":
-                user_prompt = input[i]["content"]
+    def preprocess_prompt(self, inputs):
+        prompt_list = list()
+        for input in inputs:
+            system_message, user_prompt = "", ""
+            for i in range(len(input)):
+                if input[i]["role"] == "system":
+                    system_message = input[i]["content"]
+                elif input[i]["role"] == "user":
+                    user_prompt = input[i]["content"]
         
-        prompt = f"""<|im_start|>system\n{system_message}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant"""
-        prompt = self.tokenizer(prompt, return_tensors="pt").input_ids
-        prompt = prompt.to("cuda")
+            prompt = f"""<|im_start|>system\n{system_message}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant"""
+            prompt_list.append(prompt)
 
-        return prompt
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)
+        encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
+
+        return encoded_inputs
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        best_response = responses[0]
 
-        return best_response
+        return responses
 
 
 class Chatmodel_4(model_base):
@@ -199,7 +202,7 @@ class Chatmodel_4(model_base):
         return encoded_inputs
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
@@ -234,7 +237,7 @@ class Chatmodel_5(model_base):
         return encoded_inputs
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, temperature=0.2, top_k=50, top_p=0.95)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses

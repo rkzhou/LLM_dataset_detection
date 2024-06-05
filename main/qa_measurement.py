@@ -73,25 +73,22 @@ def thresholding_tensor(tensor_path, threshold, specific_index=None):
             if compared_tensor[i] == True:
                 larger_threshold_num += 1
 
-    print(larger_threshold_num)
+    return larger_threshold_num
 
 if __name__ == '__main__':
-    # dataset = utils.get_dataset("databricks/databricks-dolly-15k", "../dataset/dd_15k.pkl")
-
-    # cate_num = dict()
-    # for i in range(len(dataset['train'])):
-    #     current_cate = dataset['train'][i]['category']
-    #     if current_cate in cate_num.keys():
-    #         cate_num[current_cate] += 1
-    #     else:
-    #         cate_num.update({current_cate: 1})
-    # print(cate_num)
-    # print('-----------------------------')
+    print("member models:\n")
+    model_name = []
+    dataset_name = ""
+    thres = 0.7
+    for name in model_name:
+      thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
+      print(thres_num)
 
 
-    model_name = "speechless13B"
-    dataset_name = "dd_15k"
-    thres = 0.95
-    categories = ["closed_qa", "open_qa", "general_qa", "classification", "information_extraction", "brainstorming", "summarization", "creative_writing"]
-    for cate in categories:
-        thresholding_tensor("../answers/{}/{}/{}/answer_scores.pt".format(dataset_name, cate, model_name), thres)
+    print("nonmember models:\n")
+    model_name = [""]
+    dataset_name = ""
+    thres = 0.7
+    for name in model_name:
+       thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
+       print(thres_num)

@@ -1,0 +1,19 @@
+dataset_name: "Open-Orca/SlimOrca"
+dataset_path: "../dataset/slimorca.pkl"
+saved_category: "../categorization/slimorca_answers.pkl"
+saved_dataset: "../categorization/slimorca_datasets.pkl"
+seed_index: 42
+
+chatgpt3.5:
+  preprocess_dataset_save_path: "../com_llm_dataset/slimorca.jsonl"
+  answer_root: "../answers/chatgpt3.5/slimorca"
+  batch_size: 1
+  inference_times: 3
+  early_stop_flag: False
+  early_stop_num: 1500
+  training_epoch: 3
+  training_suffix: "slimorca"
+  api_key: "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"
+
+gemini-1.5-flash:
+  api_key: "AIzaSyBrplDrBas1hAe78zMg303lHkzlkkSnEbU"

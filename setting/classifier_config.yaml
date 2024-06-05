@@ -1,7 +1,9 @@
-dataset_name: "Open-Orca/OpenOrca"
-dataset_path: "../dataset/OpenOrca.pkl"
+dataset_name: "Open-Orca/SlimOrca"
+dataset_path: "../dataset/slimorca.pkl"
 model_name: "mistralai/Mistral-7B-Instruct-v0.2"
 seed_index: 42
+predict_batch_size: 8
+prediction_save_root: "../categorization/"
 
 mistralai/Mistral-7B-Instruct-v0.2:
   output_dir: "../model/open_qa/"
@@ -12,8 +14,6 @@ mistralai/Mistral-7B-Instruct-v0.2:
   learning_rate: 0.00002
   lr_scheduler_type: "constant"
   report_to: "wandb"
-  predict_batch_size: 8
-  prediction_save_path: "../categorization"
   answer_prefix: "[/INST] The category for the given question is "
 
 base_lora:
