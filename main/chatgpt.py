@@ -168,7 +168,7 @@ def generate_answers(args, api_name):
                     benchmark_answer_list.append(data["output"])
                 elif args["dataset_name"] == "Open-Orca/SlimOrca":
                     format_data.append({"role": "system", "content": data["conversations"][0]["value"]})
-                    format_data.append({"role": "user", "content": ["conversations"][1]["value"]})
+                    format_data.append({"role": "user", "content": data["conversations"][1]["value"]})
                     benchmark_answer_list.append(data["conversations"][2]["value"])
                 elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
                     format_data.append({"role": "system", "content": ""})

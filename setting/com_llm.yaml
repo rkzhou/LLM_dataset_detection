@@ -1,7 +1,7 @@
 dataset_name: "Open-Orca/SlimOrca"
 dataset_path: "../dataset/slimorca.pkl"
 saved_category: "../categorization/slimorca_answers.pkl"
-saved_dataset: "../categorization/slimorca_datasets.pkl"
+saved_dataset: "../categorization/slimorca_selected_datasets.pkl"
 seed_index: 42
 
 chatgpt3.5:

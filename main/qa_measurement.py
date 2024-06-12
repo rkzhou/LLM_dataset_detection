@@ -76,19 +76,23 @@ def thresholding_tensor(tensor_path, threshold, specific_index=None):
     return larger_threshold_num
 
 if __name__ == '__main__':
-    print("member models:\n")
-    model_name = []
-    dataset_name = ""
-    thres = 0.7
-    for name in model_name:
-      thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
-      print(thres_num)
+    # print("member models:\n")
+    # model_name = ["falcon1B"]
+    # dataset_name = "einstein7B"
+    # thres = 0.7
+    # for name in model_name:
+    #  thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
+    #  print(thres_num)
 
 
-    print("nonmember models:\n")
-    model_name = [""]
-    dataset_name = ""
-    thres = 0.7
-    for name in model_name:
-       thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
-       print(thres_num)
+    # print("nonmember models:\n")
+    # model_name = [""]
+    # dataset_name = ""
+    # thres = 0.7
+    # for name in model_name:
+    #    thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
+    #    print(thres_num)
+
+    thres_list = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
+    for thres in thres_list:
+        print(thresholding_tensor("../answers/slimorca/monarch7B/answer_scores.pt", thres))

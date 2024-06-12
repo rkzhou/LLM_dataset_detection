@@ -79,9 +79,9 @@ class Chatmodel_1(model_base):
         super().__init__(name)
     
     def preprocess_prompt(self, inputs):
-        prompt_prefix0 = "### Instruction:\n"
-        prompt_prefix1 = "### Input:\n"
-        prompt_prefix2 = "### Response:\n"
+        prompt_prefix0 = "### System:\n"
+        prompt_prefix1 = "### User:\n"
+        prompt_prefix2 = "### Assistant:\n"
 
         prompt_list = list()
         for input in inputs:
@@ -92,7 +92,7 @@ class Chatmodel_1(model_base):
                 elif input[i]["role"] == "user":
                     user_prompt = input[i]["content"]
             
-            prompt = "{}{}\n\n{}{}\n\n{}\n".format(prompt_prefix0, user_prompt, prompt_prefix1, system_message, prompt_prefix2)
+            prompt = "{}{}\n{}{}\n{}".format(prompt_prefix0, system_message, prompt_prefix1, user_prompt, prompt_prefix2)
             prompt_list.append(prompt)
 
         encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)

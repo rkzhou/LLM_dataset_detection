@@ -225,6 +225,7 @@ def predict_model(args):
         dataset = dataset["train"]
     elif args["dataset_name"] == "Open-Orca/SlimOrca":
         dataset = dataset["train"]
+        dataset = dataset.filter(lambda example: len(example["conversations"]) == 3)
     elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
         dataset = dataset["train_sft"]
 

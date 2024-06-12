@@ -9,6 +9,7 @@ import math
 import yaml
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, AutoModel
+from sentence_transformers import SentenceTransformer
 
 
 def fetch_dataset(args, name, hf_path):
@@ -129,7 +130,8 @@ def generate_answers(args):
                     position = vocab.index(token)
                     model_tfidf[position] += 1
 
-                similarity_score = cos_simi(benchmark_tfidf, model_tfidf).item()
+                similarity_score = cos_simi(benchmark_tfidf, model_tfidf)
+                similarity_score = torch.clamp(similarity_score, min=0.0, max=1.0).item()
 
                 model_scores.append(similarity_score)
             if data_index >= len(dataset):
@@ -169,7 +171,7 @@ def generate_answers(args):
                     benchmark_answer_list.append(data["output"])
                 elif args["dataset_name"] == "Open-Orca/SlimOrca":
                     format_data.append({"role": "system", "content": data["conversations"][0]["value"]})
-                    format_data.append({"role": "user", "content": ["conversations"][1]["value"]})
+                    format_data.append({"role": "user", "content": data["conversations"][1]["value"]})
                     benchmark_answer_list.append(data["conversations"][2]["value"])
                 elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
                     format_data.append({"role": "system", "content": ""})
@@ -239,7 +241,8 @@ def generate_answers(args):
                     model_tfidf[times][position] += 1
 
             for times in range(args["inference_times"]):
-                similarity_score = cos_simi(benchmark_tfidf, model_tfidf[times, :]).item()
+                similarity_score = cos_simi(benchmark_tfidf, model_tfidf[times, :])
+                similarity_score = torch.clamp(similarity_score, min=0.0, max=1.0).item()
                 if similarity_score > best_score:
                     best_score = similarity_score
                     best_index = times
@@ -259,8 +262,97 @@ def generate_answers(args):
     torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
 
 
+def compare_diff_metric(args):
+    if args["saved_dataset"] != "None":
+        with open(args["saved_dataset"], "rb") as file:
+            dataset = pickle.load(file)
+    else:
+        dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
+    
+    if args["saved_category"] != "None":
+        with open(args["saved_category"], "rb") as file:
+            data_category = pickle.load(file)
+    
+        data_selection = list()
+        for i in range(len(data_category)):
+            if data_category[i] == "qa":
+                data_selection.append(i)
+        dataset = dataset.select(data_selection)
+    else: # for dd_15k dataset
+        select_category_list = ["closed_qa", "open_qa", "general_qa"]
+        dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
+
+    data_group_num = math.ceil(len(dataset) / args["batch_size"])
+
+    model_scores = list()
+    cos_simi = torch.nn.CosineSimilarity(dim=0)
+    semantic_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    saved_answer_num = 0
+    ### loop every batch of questions
+    for group_index in tqdm(range(data_group_num)):
+        ### check if answers have been already saved
+        for i in range(args["batch_size"]):
+            data_index = group_index * args["batch_size"] + i
+            if os.path.exists("{}/answer_{}.pkl".format(args["answer_root"], data_index)):
+                saved_answer_num += 1
+                with open("{}/answer_{}.pkl".format(args["answer_root"], data_index), 'rb') as file:
+                    saved_model_answer = pickle.load(file)
+                
+                if args["dataset_name"] == "databricks/databricks-dolly-15k":
+                    benchmark_answer = dataset[data_index]["response"]
+                elif args["dataset_name"] == "tatsu-lab/alpaca":
+                    benchmark_answer = dataset[data_index]["output"]
+                elif args["dataset_name"] == "Open-Orca/SlimOrca":
+                    benchmark_answer = dataset[data_index]["conversations"][2]["value"]
+                elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+                    benchmark_answer = dataset[data_index]["messages"][1]["content"]
+                
+                # TF-IDF similarity calculation
+                benchmark_split_tokens = split_sentence(benchmark_answer)
+                model_split_tokens = split_sentence(saved_model_answer)
+
+                vocab = list(set(benchmark_split_tokens + model_split_tokens))
+                vocab_size = len(vocab)
+                benchmark_tfidf = torch.zeros(vocab_size)
+                model_tfidf = torch.zeros(vocab_size)
+
+                for token in benchmark_split_tokens:
+                    position = vocab.index(token)
+                    benchmark_tfidf[position] += 1
+                for token in model_split_tokens:
+                    position = vocab.index(token)
+                    model_tfidf[position] += 1
+                TF_IDF_similarity_score = cos_simi(benchmark_tfidf, model_tfidf)
+                TF_IDF_similarity_score = torch.clamp(TF_IDF_similarity_score, min=0.0, max=1.0).item()
+
+                # textual semantic similarity calculation
+                compare_answers = [benchmark_answer, saved_model_answer]
+                semantic_embeddings = semantic_model.encode(compare_answers)
+                semantic_embeddings = torch.from_numpy(semantic_embeddings)
+                semantic_similarity_score = cos_simi(semantic_embeddings[0, :], semantic_embeddings[1, :])
+                semantic_similarity_score = torch.clamp(semantic_similarity_score, min=0.0, max=1.0).item()
+
+                if args["metric"] == "TF-IDF":
+                    model_scores.append(TF_IDF_similarity_score)
+                elif args["metric"] == "semantic":
+                    model_scores.append(semantic_similarity_score)
+                elif args["metric"] == "TF+semantic":
+                    scores_sum = 0.2 * TF_IDF_similarity_score + 0.8 * semantic_similarity_score
+                    model_scores.append(scores_sum)
+                else:
+                    raise ValueError("Invalid comparison metric")
+            
+            else:
+                raise ValueError("Please generate all answers first")
+            
+    model_scores = numpy.array(model_scores)
+    scores_tensor = torch.flatten(torch.Tensor(model_scores))
+    torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
+    print("END")
 
 if __name__ == '__main__':
     with open(os.path.join("../setting", "qa_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
-    generate_answers(global_cfg)
+    #generate_answers(global_cfg)
+
+    compare_diff_metric(global_cfg)
