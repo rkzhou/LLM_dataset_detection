@@ -2,70 +2,110 @@ dataset_name: "databricks/databricks-dolly-15k"
 dataset_path: "../dataset/dd_15k.pkl"
 saved_category: "None"
 saved_dataset: "None"
-model_name: "tiiuae/falcon-7b-instruct"
+model_name: "google/gemma-7b-it"
 seed_index: 42
-general_dataset_save_path: "../ref_llm_dataset/general/dd_15k.jsonl"
+general_dataset_save_path: "../ref_llm_dataset/general/dd_15k.pkl"
 
 
 mistralai/Mistral-7B-Instruct-v0.2:
   preprocess_dataset_save_path: "../ref_llm_dataset/mistral/dd_15k.jsonl"
   output_dir: "../ref_models/mistral/dd_15k/"
-  per_device_train_batch_size: 2
-  optim: "paged_adamw_32bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  learning_rate: 0.0002
-  lr_scheduler_type: "constant"
-
-
-google/gemma-7b-it:
-  preprocess_dataset_save_path: "../ref_llm_dataset/gemma/dd_15k.jsonl"
-  output_dir: "../ref_models/gemma/dd_15k/"
-  per_device_train_batch_size: 2
-  optim: "paged_adamw_32bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  learning_rate: 0.0002
-  lr_scheduler_type: "constant"
-
-
-meta-llama/Meta-Llama-3-8B-Instruct:
-  preprocess_dataset_save_path: "../ref_llm_dataset/llama/dd_15k.jsonl"
-  output_dir: "../ref_models/llama/dd_15k/"
-  per_device_train_batch_size: 2
-  optim: "paged_adamw_32bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  learning_rate: 0.0002
-  lr_scheduler_type: "constant"
-
-
-Qwen/Qwen2-7B-Instruct:
-  preprocess_dataset_save_path: "../ref_llm_dataset/qwen/dd_15k.jsonl"
-  output_dir: "../ref_models/qwen/dd_15k/"
-  per_device_train_batch_size: 2
-  optim: "paged_adamw_32bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  learning_rate: 0.0002
-  lr_scheduler_type: "constant"
-
-
-tiiuae/falcon-7b-instruct:
-  preprocess_dataset_save_path: "../ref_llm_dataset/falcon/dd_15k.jsonl"
-  output_dir: "../ref_models/falcon/dd_15k/"
-  per_device_train_batch_size: 2
-  optim: "paged_adamw_32bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  learning_rate: 0.0002
-  lr_scheduler_type: "constant"
-
-
-base_lora:
   r: 64
   lora_alpha: 16
   lora_dropout: 0.1
   bias: "none"
   task_type: "CAUSAL_LM"
-  target_modules: ['o_proj', 'q_proj', 'up_proj', 'v_proj', 'k_proj', 'down_proj', 'gate_proj']
+  per_device_train_batch_size: 2
+  optim: "paged_adamw_32bit"
+  num_train_epochs: 3.0
+  save_strategy: "epoch"
+  learning_rate: 0.0002
+  lr_scheduler_type: "constant"
+  weight_decay: 0.001
+  warmup_ratio: 0.03
+  group_by_length: True
+  packing: False
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
+
+
+google/gemma-7b-it:
+  preprocess_dataset_save_path: "../ref_llm_dataset/gemma/dd_15k.jsonl"
+  output_dir: "../ref_models/gemma/dd_15k/"
+  r: 64
+  lora_alpha: 16
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  per_device_train_batch_size: 2
+  optim: "paged_adamw_32bit"
+  num_train_epochs: 3.0
+  save_strategy: "epoch"
+  learning_rate: 0.0002
+  lr_scheduler_type: "constant"
+  weight_decay: 0.001
+  warmup_ratio: 0.03
+  group_by_length: True
+  packing: False
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
+
+
+meta-llama/Meta-Llama-3-8B-Instruct:
+  preprocess_dataset_save_path: "../ref_llm_dataset/llama/dd_15k.jsonl"
+  output_dir: "../ref_models/llama/dd_15k/"
+  r: 64
+  lora_alpha: 16
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  per_device_train_batch_size: 2
+  optim: "paged_adamw_32bit"
+  num_train_epochs: 3.0
+  save_strategy: "epoch"
+  learning_rate: 0.0002
+  lr_scheduler_type: "constant"
+  weight_decay: 0.001
+  warmup_ratio: 0.03
+  group_by_length: True
+  packing: False
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
+
+
+Qwen/Qwen2-7B-Instruct:
+  preprocess_dataset_save_path: "../ref_llm_dataset/qwen/dd_15k.jsonl"
+  output_dir: "../ref_models/qwen/dd_15k/"
+  r: 64
+  lora_alpha: 16
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  per_device_train_batch_size: 2
+  optim: "paged_adamw_32bit"
+  num_train_epochs: 3.0
+  save_strategy: "epoch"
+  learning_rate: 0.0002
+  lr_scheduler_type: "constant"
+  weight_decay: 0.001
+  warmup_ratio: 0.03
+  group_by_length: True
+  packing: False
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
+
+
+tiiuae/falcon-7b-instruct:
+  preprocess_dataset_save_path: "../ref_llm_dataset/falcon/dd_15k.jsonl"
+  output_dir: "../ref_models/falcon/dd_15k/"
+  r: 32
+  lora_alpha: 8
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  per_device_train_batch_size: 2
+  optim: "paged_adamw_32bit"
+  num_train_epochs: 3.0
+  save_strategy: "epoch"
+  learning_rate: 0.0002
+  lr_scheduler_type: "constant"
+  weight_decay: 0.001
+  warmup_ratio: 0.03
+  group_by_length: True
+  packing: False

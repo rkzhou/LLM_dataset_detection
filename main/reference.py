@@ -4,516 +4,156 @@ import pickle
 import utils
 import json
 import peft
-from transformers import AutoModelForCausalLM, AutoTokenizer, DataCollatorForSeq2Seq, TrainingArguments, Trainer
-from datasets import Dataset
+import transformers
+import trl
+import datasets
 
-class Mistral():
+
+class reference_model_base():
     def __init__(self, args):
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(args["model_name"])
-        self.tokenizer.padding_side = "right"
+        self.model_name = args["model_name"]
+        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+        self.model.config.use_cache = False
+        self.model.config.pretraining_tp = 1
+
+
+    # this function is used to output the right formate for each row in the dataset
+    def create_text_row(self, system_prompt, user_prompt, assistant_response):
+        pass
 
 
     def preprocess_data(self, args):
-        with open(args["general_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
+        with open(args["general_dataset_save_path"], "rb") as general_dataset_file:
+            dataset = pickle.load(general_dataset_file)
 
-        dataset_save_root = args[args["model_name"]]["preprocess_dataset_save_path"].split("/")
+        dataset_save_root = args[self.model_name]["preprocess_dataset_save_path"].split("/")
         dataset_save_root = dataset_save_root[:-1]
         dataset_save_root = os.path.join(*dataset_save_root)
         if not os.path.exists(dataset_save_root):
             os.makedirs(dataset_save_root)
-
-        processed_data_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-            data.pop(0)
-            processed_data_list.append(data)
-            
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], "w") as file:
-            for i in range(len(processed_data_list)):
-                temp = json.dumps(processed_data_list[i])
-                file.write(temp)
-                if i != (len(processed_data_list)-1):
-                    file.write("\n")
-
-
-    def train(self, args):
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
         
-        encoded_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-
-            prompt, response = None, None
-            for element in data:
-                if element["role"] == "user":
-                    prompt = "<s>[INST] {} [/INST]".format(element["content"])
-                elif element["role"] == "assistant":
-                    response = "{}</s> ".format(element["content"])
-                else:
-                    raise ValueError("Invalid role")
-            
-            if prompt != None and response != None:
-                encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
-                encoded_response = self.tokenizer.encode(response, add_special_tokens=False)
-
-                sample = {
-                    "input_ids": encoded_prompt + encoded_response,
-                    "attention_mask": [1] * (len(encoded_prompt) + len(encoded_response)),
-                    "labels": [-100] * len(encoded_prompt) + encoded_response,
+        with open(args[self.model_name]["preprocess_dataset_save_path"], "w") as output_jsonl_file:
+            for item in dataset:
+                json_object = {
+                    "text": self.create_text_row(item["system"], item["instruction"], item["response"]),
+                    "system_prompt": item["system"],
+                    "user_prompt": item["instruction"],
+                    "assistant_response": item["response"]
                 }
 
-                encoded_list.append(sample)  
-        
-        encoded_train_dataset = Dataset.from_list(encoded_list)
-        encoded_train_dataset = encoded_train_dataset.shuffle(seed=args["seed_index"])
-        
-        self.model = peft.prepare_model_for_kbit_training(self.model)
+                output_jsonl_file.write(json.dumps(json_object) + "\n")
+    
+
+    def train(self, args):
+        train_dataset = datasets.load_dataset('json', data_files=args[self.model_name]["preprocess_dataset_save_path"], split="train")
+
         lora_config = peft.LoraConfig(
-        r=args["base_lora"]["r"],  # dimension of the updated matrices
-        lora_alpha=args["base_lora"]["lora_alpha"],  # parameter for scaling
-        lora_dropout=args["base_lora"]["lora_dropout"],  # dropout probability for layers
-        bias=args["base_lora"]["bias"],
-        task_type=args["base_lora"]["task_type"],
-        target_modules=args["base_lora"]["target_modules"],
+        r=args[self.model_name]["r"],
+        lora_alpha=args[self.model_name]["lora_alpha"],
+        lora_dropout=args[self.model_name]["lora_dropout"],
+        bias=args[self.model_name]["bias"],
+        task_type=args[self.model_name]["task_type"],
+        target_modules=args[self.model_name]["target_modules"],
         )
-        self.model = peft.get_peft_model(self.model, lora_config)
 
-        if not os.path.exists(args[args["model_name"]]["output_dir"]):
-            os.makedirs(args[args["model_name"]]["output_dir"])
+        if not os.path.exists(args[self.model_name]["output_dir"]):
+            os.makedirs(args[self.model_name]["output_dir"])
         
-        data_collator = DataCollatorForSeq2Seq(self.tokenizer)
-        training_config = TrainingArguments(
-            output_dir=args[args["model_name"]]["output_dir"],
-            per_device_train_batch_size=args[args["model_name"]]["per_device_train_batch_size"],
-            optim=args[args["model_name"]]["optim"],
-            num_train_epochs=args[args["model_name"]]["num_train_epochs"],
-            save_strategy=args[args["model_name"]]["save_strategy"],
-            learning_rate=args[args["model_name"]]["learning_rate"],
-            lr_scheduler_type=args[args["model_name"]]["lr_scheduler_type"]
+        training_config = transformers.TrainingArguments(
+            output_dir=args[self.model_name]["output_dir"],
+            per_device_train_batch_size=args[self.model_name]["per_device_train_batch_size"],
+            optim=args[self.model_name]["optim"],
+            num_train_epochs=args[self.model_name]["num_train_epochs"],
+            save_strategy=args[self.model_name]["save_strategy"],
+            learning_rate=args[self.model_name]["learning_rate"],
+            lr_scheduler_type=args[self.model_name]["lr_scheduler_type"],
+            weight_decay = args[self.model_name]["weight_decay"],
+            warmup_ratio = args[self.model_name]["warmup_ratio"],
+            group_by_length = args[self.model_name]["group_by_length"],
         )
-        trainer = Trainer(
+        trainer = trl.SFTTrainer(
             model=self.model,
-            train_dataset=encoded_train_dataset,
+            train_dataset=train_dataset,
+            peft_config=lora_config,
+            dataset_text_field="text",
+            tokenizer=self.tokenizer,
             args=training_config,
-            data_collator=data_collator
+            packing=args[self.model_name]["packing"],
         )
 
-        self.model.config.use_cache = False
-        trainer.train()
 
+        trainer.train()
+        final_model_save_path = args[self.model_name]["output_dir"] + "final_model"
+        trainer.model.save_pretrained(final_model_save_path)
+    
 
     def predict(self):
         pass
 
 
-class Llama3():
-    def __init__(self, args):
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(args["model_name"])
-        self.tokenizer.padding_side = "right"
-
-
-    def preprocess_data(self, args):
-        with open(args["general_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
-
-        dataset_save_root = args[args["model_name"]]["preprocess_dataset_save_path"].split("/")
-        dataset_save_root = dataset_save_root[:-1]
-        dataset_save_root = os.path.join(*dataset_save_root)
-        if not os.path.exists(dataset_save_root):
-            os.makedirs(dataset_save_root)
-
-        processed_data_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-            data.pop(0)
-            processed_data_list.append(data)
-            
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], "w") as file:
-            for i in range(len(processed_data_list)):
-                temp = json.dumps(processed_data_list[i])
-                file.write(temp)
-                if i != (len(processed_data_list)-1):
-                    file.write("\n")
-
-
-    def train(self, args):
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
+class Mistral(reference_model_base):
+    # Mistral doesn't support system role
+    def create_text_row(self, system, instruction, response):
+        if system == "":
+            text_row = "<s>[INST] {} [/INST]\n{}</s>".format(instruction, response)
+        else:
+            text_row = "<s>[INST] {} {} [/INST]\n{}</s>".format(system, instruction, response)
         
-        encoded_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
+        return text_row
 
-            prompt, response = None, None
-            for element in data:
-                if element["role"] == "user":
-                    prompt = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|>".format(element["content"])
-                elif element["role"] == "assistant":
-                    response = "<|start_header_id|>assistant<|end_header_id|>\n\n{}<|eot_id|>".format(element["content"])
-                else:
-                    raise ValueError("Invalid role")
-            
-            if prompt != None and response != None:
-                encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
-                encoded_response = self.tokenizer.encode(response, add_special_tokens=False)
 
-                sample = {
-                    "input_ids": encoded_prompt + encoded_response,
-                    "attention_mask": [1] * (len(encoded_prompt) + len(encoded_response)),
-                    "labels": [-100] * len(encoded_prompt) + encoded_response,
-                }
-
-                encoded_list.append(sample)  
+class Gemma(reference_model_base):
+    # Gemma doesn't support system role
+    def create_text_row(self, system, instruction, response):
+        if system == "":
+            text_row = "<bos><start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n{}<end_of_turn>".format(instruction, response)
+        else:
+            text_row = "<bos><start_of_turn>user\n{} {}<end_of_turn>\n<start_of_turn>model\n{}<end_of_turn>".format(system, instruction, response)
         
-        encoded_train_dataset = Dataset.from_list(encoded_list)
-        encoded_train_dataset = encoded_train_dataset.shuffle(seed=args["seed_index"])
+        return text_row
+
+
+class Llama3(reference_model_base):
+    def create_text_row(self, system, instruction, response):
+        if system == "":
+            text_row = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{}<|eot_id|>".format(instruction, response)
+        else:
+            text_row = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{}<|eot_id|>".format(system, instruction, response)
         
-        self.model = peft.prepare_model_for_kbit_training(self.model)
-        lora_config = peft.LoraConfig(
-        r=args["base_lora"]["r"],  # dimension of the updated matrices
-        lora_alpha=args["base_lora"]["lora_alpha"],  # parameter for scaling
-        lora_dropout=args["base_lora"]["lora_dropout"],  # dropout probability for layers
-        bias=args["base_lora"]["bias"],
-        task_type=args["base_lora"]["task_type"],
-        target_modules=args["base_lora"]["target_modules"],
-        )
-        self.model = peft.get_peft_model(self.model, lora_config)
+        return text_row
 
-        if not os.path.exists(args[args["model_name"]]["output_dir"]):
-            os.makedirs(args[args["model_name"]]["output_dir"])
+
+class Qwen(reference_model_base):
+    def create_text_row(self, system, instruction, response):
+        if system == "":
+            text_row = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n{}<|im_end|>".format(instruction, response)
+        else:
+            text_row = "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n{}<|im_end|>".format(system, instruction, response)
         
-        data_collator = DataCollatorForSeq2Seq(self.tokenizer)
-        training_config = TrainingArguments(
-            output_dir=args[args["model_name"]]["output_dir"],
-            per_device_train_batch_size=args[args["model_name"]]["per_device_train_batch_size"],
-            optim=args[args["model_name"]]["optim"],
-            num_train_epochs=args[args["model_name"]]["num_train_epochs"],
-            save_strategy=args[args["model_name"]]["save_strategy"],
-            learning_rate=args[args["model_name"]]["learning_rate"],
-            lr_scheduler_type=args[args["model_name"]]["lr_scheduler_type"]
-        )
-        trainer = Trainer(
-            model=self.model,
-            train_dataset=encoded_train_dataset,
-            args=training_config,
-            data_collator=data_collator
-        )
-
-        self.model.config.use_cache = False
-        trainer.train()
+        return text_row
 
 
-    def predict(self):
-        pass
-
-
-class Gemma():
-    def __init__(self, args):
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(args["model_name"])
-        self.tokenizer.padding_side = "right"
-
-
-    def preprocess_data(self, args):
-        with open(args["general_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
-
-        dataset_save_root = args[args["model_name"]]["preprocess_dataset_save_path"].split("/")
-        dataset_save_root = dataset_save_root[:-1]
-        dataset_save_root = os.path.join(*dataset_save_root)
-        if not os.path.exists(dataset_save_root):
-            os.makedirs(dataset_save_root)
-
-        processed_data_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-            data.pop(0)
-            processed_data_list.append(data)
-            
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], "w") as file:
-            for i in range(len(processed_data_list)):
-                temp = json.dumps(processed_data_list[i])
-                file.write(temp)
-                if i != (len(processed_data_list)-1):
-                    file.write("\n")
-
-
-    def train(self, args):
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
+class Falcon(reference_model_base):
+    def create_text_row(self, system, instruction, response):
+        if system == "":
+            text_row = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n{}<|im_end|>".format(instruction, response)
+        else:
+            text_row = "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n{}<|im_end|>".format(system, instruction, response)
         
-        encoded_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-
-            prompt, response = None, None
-            for element in data:
-                if element["role"] == "user":
-                    prompt = "<bos><start_of_turn>user\n{}<end_of_turn>\n".format(element["content"])
-                elif element["role"] == "assistant":
-                    response = "<start_of_turn>model\n{}<end_of_turn>".format(element["content"])
-                else:
-                    raise ValueError("Invalid role")
-            
-            if prompt != None and response != None:
-                encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
-                encoded_response = self.tokenizer.encode(response, add_special_tokens=False)
-
-                sample = {
-                    "input_ids": encoded_prompt + encoded_response,
-                    "attention_mask": [1] * (len(encoded_prompt) + len(encoded_response)),
-                    "labels": [-100] * len(encoded_prompt) + encoded_response,
-                }
-
-                encoded_list.append(sample)  
-        
-        encoded_train_dataset = Dataset.from_list(encoded_list)
-        encoded_train_dataset = encoded_train_dataset.shuffle(seed=args["seed_index"])
-        
-        self.model = peft.prepare_model_for_kbit_training(self.model)
-        lora_config = peft.LoraConfig(
-        r=args["base_lora"]["r"],  # dimension of the updated matrices
-        lora_alpha=args["base_lora"]["lora_alpha"],  # parameter for scaling
-        lora_dropout=args["base_lora"]["lora_dropout"],  # dropout probability for layers
-        bias=args["base_lora"]["bias"],
-        task_type=args["base_lora"]["task_type"],
-        target_modules=args["base_lora"]["target_modules"],
-        )
-        self.model = peft.get_peft_model(self.model, lora_config)
-
-        if not os.path.exists(args[args["model_name"]]["output_dir"]):
-            os.makedirs(args[args["model_name"]]["output_dir"])
-        
-        data_collator = DataCollatorForSeq2Seq(self.tokenizer)
-        training_config = TrainingArguments(
-            output_dir=args[args["model_name"]]["output_dir"],
-            per_device_train_batch_size=args[args["model_name"]]["per_device_train_batch_size"],
-            optim=args[args["model_name"]]["optim"],
-            num_train_epochs=args[args["model_name"]]["num_train_epochs"],
-            save_strategy=args[args["model_name"]]["save_strategy"],
-            learning_rate=args[args["model_name"]]["learning_rate"],
-            lr_scheduler_type=args[args["model_name"]]["lr_scheduler_type"]
-        )
-        trainer = Trainer(
-            model=self.model,
-            train_dataset=encoded_train_dataset,
-            args=training_config,
-            data_collator=data_collator
-        )
-
-        self.model.config.use_cache = False
-        trainer.train()
+        return text_row
 
 
-    def predict(self):
-        pass
-
-
-class Qwen():
-    def __init__(self, args):
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(args["model_name"])
-        self.tokenizer.padding_side = "right"
-
-
-    def preprocess_data(self, args):
-        with open(args["general_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
-
-        dataset_save_root = args[args["model_name"]]["preprocess_dataset_save_path"].split("/")
-        dataset_save_root = dataset_save_root[:-1]
-        dataset_save_root = os.path.join(*dataset_save_root)
-        if not os.path.exists(dataset_save_root):
-            os.makedirs(dataset_save_root)
-
-        processed_data_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-            data.pop(0)
-            processed_data_list.append(data)
-            
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], "w") as file:
-            for i in range(len(processed_data_list)):
-                temp = json.dumps(processed_data_list[i])
-                file.write(temp)
-                if i != (len(processed_data_list)-1):
-                    file.write("\n")
-
-
-    def train(self, args):
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
-        
-        encoded_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-
-            prompt, response = None, None
-            for element in data:
-                if element["role"] == "user":
-                    prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>User\n{}<|im_end|>\n".format(element["content"])
-                elif element["role"] == "assistant":
-                    response = "<|im_start|>assistant\n{}<|im_end|>".format(element["content"])
-                else:
-                    raise ValueError("Invalid role")
-            
-            if prompt != None and response != None:
-                encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
-                encoded_response = self.tokenizer.encode(response, add_special_tokens=False)
-
-                sample = {
-                    "input_ids": encoded_prompt + encoded_response,
-                    "attention_mask": [1] * (len(encoded_prompt) + len(encoded_response)),
-                    "labels": [-100] * len(encoded_prompt) + encoded_response,
-                }
-
-                encoded_list.append(sample)  
-        
-        encoded_train_dataset = Dataset.from_list(encoded_list)
-        encoded_train_dataset = encoded_train_dataset.shuffle(seed=args["seed_index"])
-        
-        self.model = peft.prepare_model_for_kbit_training(self.model)
-        lora_config = peft.LoraConfig(
-        r=args["base_lora"]["r"],  # dimension of the updated matrices
-        lora_alpha=args["base_lora"]["lora_alpha"],  # parameter for scaling
-        lora_dropout=args["base_lora"]["lora_dropout"],  # dropout probability for layers
-        bias=args["base_lora"]["bias"],
-        task_type=args["base_lora"]["task_type"],
-        target_modules=args["base_lora"]["target_modules"],
-        )
-        self.model = peft.get_peft_model(self.model, lora_config)
-
-        if not os.path.exists(args[args["model_name"]]["output_dir"]):
-            os.makedirs(args[args["model_name"]]["output_dir"])
-        
-        data_collator = DataCollatorForSeq2Seq(self.tokenizer)
-        training_config = TrainingArguments(
-            output_dir=args[args["model_name"]]["output_dir"],
-            per_device_train_batch_size=args[args["model_name"]]["per_device_train_batch_size"],
-            optim=args[args["model_name"]]["optim"],
-            num_train_epochs=args[args["model_name"]]["num_train_epochs"],
-            save_strategy=args[args["model_name"]]["save_strategy"],
-            learning_rate=args[args["model_name"]]["learning_rate"],
-            lr_scheduler_type=args[args["model_name"]]["lr_scheduler_type"]
-        )
-        trainer = Trainer(
-            model=self.model,
-            train_dataset=encoded_train_dataset,
-            args=training_config,
-            data_collator=data_collator
-        )
-
-        self.model.config.use_cache = False
-        trainer.train()
-
-
-    def predict(self):
-        pass
-
-
-class Falcon():
-    def __init__(self, args):
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(args["model_name"])
-        self.tokenizer.padding_side = "right"
-
-
-    def preprocess_data(self, args):
-        with open(args["general_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
-
-        dataset_save_root = args[args["model_name"]]["preprocess_dataset_save_path"].split("/")
-        dataset_save_root = dataset_save_root[:-1]
-        dataset_save_root = os.path.join(*dataset_save_root)
-        if not os.path.exists(dataset_save_root):
-            os.makedirs(dataset_save_root)
-
-        processed_data_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-            data.pop(0)
-            processed_data_list.append(data)
-            
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], "w") as file:
-            for i in range(len(processed_data_list)):
-                temp = json.dumps(processed_data_list[i])
-                file.write(temp)
-                if i != (len(processed_data_list)-1):
-                    file.write("\n")
-
-
-    def train(self, args):
-        with open(args[args["model_name"]]["preprocess_dataset_save_path"], 'r') as json_file:
-            json_list = list(json_file)
-        
-        encoded_list = list()
-        for json_str in json_list:
-            data = json.loads(json_str)
-
-            prompt, response = None, None
-            for element in data:
-                if element["role"] == "user":
-                    prompt = "<|im_start|>user\n{}<|im_end|>\n".format(element["content"])
-                elif element["role"] == "assistant":
-                    response = "<|im_start|>assistant\n{}<|im_end|>".format(element["content"])
-                else:
-                    raise ValueError("Invalid role")
-            
-            if prompt != None and response != None:
-                encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
-                encoded_response = self.tokenizer.encode(response, add_special_tokens=False)
-
-                sample = {
-                    "input_ids": encoded_prompt + encoded_response,
-                    "attention_mask": [1] * (len(encoded_prompt) + len(encoded_response)),
-                    "labels": [-100] * len(encoded_prompt) + encoded_response,
-                }
-
-                encoded_list.append(sample)  
-        
-        encoded_train_dataset = Dataset.from_list(encoded_list)
-        encoded_train_dataset = encoded_train_dataset.shuffle(seed=args["seed_index"])
-        
-        self.model = peft.prepare_model_for_kbit_training(self.model)
-        lora_config = peft.LoraConfig(
-        r=args["base_lora"]["r"],  # dimension of the updated matrices
-        lora_alpha=args["base_lora"]["lora_alpha"],  # parameter for scaling
-        lora_dropout=args["base_lora"]["lora_dropout"],  # dropout probability for layers
-        bias=args["base_lora"]["bias"],
-        task_type=args["base_lora"]["task_type"],
-        )
-        self.model = peft.get_peft_model(self.model, lora_config)
-
-        if not os.path.exists(args[args["model_name"]]["output_dir"]):
-            os.makedirs(args[args["model_name"]]["output_dir"])
-        
-        data_collator = DataCollatorForSeq2Seq(self.tokenizer)
-        training_config = TrainingArguments(
-            output_dir=args[args["model_name"]]["output_dir"],
-            per_device_train_batch_size=args[args["model_name"]]["per_device_train_batch_size"],
-            optim=args[args["model_name"]]["optim"],
-            num_train_epochs=args[args["model_name"]]["num_train_epochs"],
-            save_strategy=args[args["model_name"]]["save_strategy"],
-            learning_rate=args[args["model_name"]]["learning_rate"],
-            lr_scheduler_type=args[args["model_name"]]["lr_scheduler_type"]
-        )
-        trainer = Trainer(
-            model=self.model,
-            train_dataset=encoded_train_dataset,
-            args=training_config,
-            data_collator=data_collator
-        )
-
-        self.model.config.use_cache = False
-        trainer.train()
-
-
-    def predict(self):
-        pass
+def format_dataset(data):
+    if data["context"] == "":
+        item = {"system": "", "instruction": data["instruction"], "response": data["response"]}
+    else:
+        item = {"system": "", "instruction": data["context"] + " " + data["instruction"], "response": data["response"]}
+    
+    return item
 
 
 def fine_tune(args):
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    dataset = dataset["train"]
     
     dataset_save_root = args["general_dataset_save_path"].split("/")
     dataset_save_root = dataset_save_root[:-1]
@@ -521,21 +161,13 @@ def fine_tune(args):
     if not os.path.exists(dataset_save_root):
         os.makedirs(dataset_save_root)
     
-    general_data_list = list()
     if args["dataset_name"] == "databricks/databricks-dolly-15k":
-        for data in dataset:
-            format_data = list()
-            format_data.append({"role": "system", "content": ""})
-            format_data.append({"role": "user", "content": data["context"] + data["instruction"]})
-            format_data.append({"role": "assistant", "content": data["response"]})
-            general_data_list.append(format_data)
-    
-        with open(args["general_dataset_save_path"], "w") as file:
-            for i in range(len(general_data_list)):
-                temp = json.dumps(general_data_list[i])
-                file.write(temp)
-                if i != (len(general_data_list)-1):
-                    file.write("\n")
+        dataset = dataset["train"]
+        dataset = dataset.map(format_dataset)
+        
+        with open(args["general_dataset_save_path"], "wb") as file:
+            pickle.dump(dataset, file)
+
     elif args["dataset_name"] == "tatsu-lab/alpaca":
         pass
     elif args["dataset_name"] == "Open-Orca/SlimOrca":
@@ -545,11 +177,18 @@ def fine_tune(args):
     else:
         raise ValueError("Invalid dataset")
     
-    # model = Mistral(args)
-    # model = Gemma(args)
-    # model = Llama3(args)
-    # model = Qwen(args)
-    model = Falcon(args)
+    if args["model_name"] == "mistralai/Mistral-7B-Instruct-v0.2":
+        model = Mistral(args)
+    elif args["model_name"] == "google/gemma-7b-it":
+        model = Gemma(args)
+    elif args["model_name"] == "meta-llama/Meta-Llama-3-8B-Instruct":
+        model = Llama3(args)
+    elif args["model_name"] == "Qwen/Qwen2-7B-Instruct":
+        model = Qwen(args)
+    elif args["model_name"] == "tiiuae/falcon-7b-instruct":
+        model = Falcon(args)
+    else:
+        raise ValueError("Invalid model name")
     
     model.preprocess_data(args)
     model.train(args)
