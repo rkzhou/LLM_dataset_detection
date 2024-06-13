@@ -2,7 +2,7 @@ dataset_name: "databricks/databricks-dolly-15k"
 dataset_path: "../dataset/dd_15k.pkl"
 saved_category: "None"
 saved_dataset: "None"
-model_name: "google/gemma-7b-it"
+model_name: "mistralai/Mistral-7B-Instruct-v0.2"
 seed_index: 42
 general_dataset_save_path: "../ref_llm_dataset/general/dd_15k.pkl"
 

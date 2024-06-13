@@ -53,8 +53,9 @@ class reference_model_base():
         lora_dropout=args[self.model_name]["lora_dropout"],
         bias=args[self.model_name]["bias"],
         task_type=args[self.model_name]["task_type"],
-        target_modules=args[self.model_name]["target_modules"],
         )
+        if self.model_name != "tiiuae/falcon-7b-instruct":
+            lora_config.target_modules=args[self.model_name]["target_modules"]
 
         if not os.path.exists(args[self.model_name]["output_dir"]):
             os.makedirs(args[self.model_name]["output_dir"])
