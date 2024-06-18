@@ -17,46 +17,72 @@ from tqdm import tqdm
 def split_sentence(sentence):
     return re.findall(r'\b\w+\b', sentence)
 
+
+def tokenize_text(data, tokenizer):
+    encoded_prompt = tokenizer.encode(data["text"][0], add_special_tokens=False)
+    encoded_response = tokenizer.encode(data["text"][1], add_special_tokens=False)
+    encoded_bos = tokenizer.encode(tokenizer.bos_token, add_special_tokens=False)
+    encoded_eos = tokenizer.encode(tokenizer.eos_token, add_special_tokens=False)
+
+    sample = {
+        "input_ids": encoded_bos + encoded_prompt + encoded_response + encoded_eos,
+        "attention_mask": [1] * (len(encoded_bos + encoded_prompt + encoded_response + encoded_eos)),
+        "labels": [-100] * len(encoded_bos + encoded_prompt) + encoded_response + encoded_eos,
+    }
+
+    return sample
+
+
 class reference_model_base():
     def __init__(self, args):
         self.model_name = args["model_name"]
         self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
         self.model.config.use_cache = False
-        self.model.config.pretraining_tp = 1
         self.finetune_model, _ = utils.get_pretrained_model_and_tokenizer(self.model_name)
 
 
     # this function is used to output the right formate for each row in the dataset
     def create_text_row(self, system_prompt, user_prompt, assistant_response):
-        # mistral and gemma do not support system role
-        if self.model_name in ["mistralai/Mistral-7B-Instruct-v0.2", "google/gemma-7b-it"]:
-            if system_prompt == "":
-                messages = [
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": assistant_response},
-                ]
-            else:
-                messages = [
-                {"role": "user", "content": system_prompt + " " + user_prompt},
-                {"role": "assistant", "content": assistant_response},
-                ]
-        else:
-            if system_prompt == "":
-                messages = [
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": assistant_response},
-                ]
-            else:
-                messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": assistant_response},
-                ]
+        # # mistral and gemma do not support system role
+        # if self.model_name in ["mistralai/Mistral-7B-Instruct-v0.2", "google/gemma-7b-it"]:
+        #     if system_prompt == "":
+        #         messages = [
+        #         {"role": "user", "content": user_prompt},
+        #         {"role": "assistant", "content": assistant_response},
+        #         ]
+        #     else:
+        #         messages = [
+        #         {"role": "user", "content": system_prompt + " " + user_prompt},
+        #         {"role": "assistant", "content": assistant_response},
+        #         ]
+        # else:
+        #     if system_prompt == "":
+        #         messages = [
+        #         {"role": "user", "content": user_prompt},
+        #         {"role": "assistant", "content": assistant_response},
+        #         ]
+        #     else:
+        #         messages = [
+        #         {"role": "system", "content": system_prompt},
+        #         {"role": "user", "content": user_prompt},
+        #         {"role": "assistant", "content": assistant_response},
+        #         ]
         
-        input_ids = self.tokenizer.apply_chat_template(messages, return_tensors="pt")
-        text_row = self.tokenizer.decode(input_ids[0].tolist())
+        # input_ids = self.tokenizer.apply_chat_template(messages, return_tensors="pt")
+        # text_row = self.tokenizer.decode(input_ids[0].tolist())
+        
+        if system_prompt == "":
+            messages = [
+                "### Question: {}".format(user_prompt),
+                "### Answer: {}".format(assistant_response),
+            ]
+        else:
+            messages = [
+                "### Question: {} {}".format(system_prompt, user_prompt),
+                "### Answer: {}".format(assistant_response),
+            ]
 
-        return text_row
+        return messages
 
 
     def pull_answer(self, original_answers, split_mark, raw_prompt_list=None):
@@ -102,15 +128,18 @@ class reference_model_base():
 
     def train(self, args):
         train_dataset = datasets.load_dataset('json', data_files=args[self.model_name]["preprocess_dataset_save_path"], split="train")
+        train_dataset = train_dataset.map(tokenize_text, fn_kwargs={"tokenizer": self.tokenizer}, remove_columns=train_dataset.column_names)
 
+        self.model = peft.prepare_model_for_kbit_training(self.model)
         lora_config = peft.LoraConfig(
         r=args[self.model_name]["r"],
         lora_alpha=args[self.model_name]["lora_alpha"],
         lora_dropout=args[self.model_name]["lora_dropout"],
         bias=args[self.model_name]["bias"],
         task_type=args[self.model_name]["task_type"],
-        target_modules=args[self.model_name]["target_modules"],
+        target_modules = args[self.model_name]["target_modules"],
         )
+        self.model = peft.get_peft_model(self.model, lora_config)
 
         if not os.path.exists(args[self.model_name]["output_dir"]):
             os.makedirs(args[self.model_name]["output_dir"])
@@ -123,18 +152,14 @@ class reference_model_base():
             save_strategy=args[self.model_name]["save_strategy"],
             learning_rate=args[self.model_name]["learning_rate"],
             lr_scheduler_type=args[self.model_name]["lr_scheduler_type"],
-            weight_decay = args[self.model_name]["weight_decay"],
-            warmup_ratio = args[self.model_name]["warmup_ratio"],
-            group_by_length = args[self.model_name]["group_by_length"],
+            warmup_steps=2,
+            bf16=True,
         )
-        trainer = trl.SFTTrainer(
+        trainer = transformers.Trainer(
             model=self.model,
             train_dataset=train_dataset,
-            peft_config=lora_config,
-            dataset_text_field="text",
-            tokenizer=self.tokenizer,
             args=training_config,
-            packing=args[self.model_name]["packing"],
+            data_collator=transformers.DataCollatorForSeq2Seq(self.tokenizer),
         )
 
 
@@ -361,6 +386,8 @@ class Glm(reference_model_base):
         self.model_name = args["model_name"]
         self.model = transformers.AutoModelForCausalLM.from_pretrained(self.model_name, torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto")
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+        self.model.config.use_cache = False
+        self.finetune_model = transformers.AutoModelForCausalLM.from_pretrained(self.model_name, torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto")
 
 
 def format_dataset(data, dataset_name):
@@ -408,15 +435,15 @@ def fine_tune(args):
     with open(args["general_dataset_save_path"], "wb") as file:
         pickle.dump(dataset, file)
     
-    if args["model_name"] == "mistralai/Mistral-7B-Instruct-v0.2":
+    if args["model_name"] == "mistralai/Mistral-7B-v0.1":
         model = Mistral(args)
-    elif args["model_name"] == "google/gemma-7b-it":
+    elif args["model_name"] == "google/gemma-7b":
         model = Gemma(args)
-    elif args["model_name"] == "meta-llama/Meta-Llama-3-8B-Instruct":
+    elif args["model_name"] == "meta-llama/Meta-Llama-3-8B":
         model = Llama3(args)
-    elif args["model_name"] == "Qwen/Qwen2-7B-Instruct":
+    elif args["model_name"] == "Qwen/Qwen2-7B":
         model = Qwen(args)
-    elif args["model_name"] == "THUDM/glm-4-9b-chat":
+    elif args["model_name"] == "THUDM/glm-4-9b":
         model = Glm(args)
     else:
         raise ValueError("Invalid model name")
