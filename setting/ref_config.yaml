@@ -2,7 +2,7 @@ dataset_name: "databricks/databricks-dolly-15k"
 dataset_path: "../dataset/dd_15k.pkl"
 saved_category: "None"
 saved_dataset: "None"
-model_name: "mistralai/Mistral-7B-v0.1"
+model_name: "microsoft/Orca-2-7b"
 seed_index: 42
 general_dataset_save_path: "../ref_llm_dataset/general/dd_15k.pkl"
 selected_dataset_save_path: "../ref_llm_dataset/selected/dd_15k.pkl"
@@ -92,9 +92,9 @@ Qwen/Qwen2-7B:
   inference_times: 3
 
 
-THUDM/glm-4-9b:
-  preprocess_dataset_save_path: "../ref_llm_dataset/glm/dd_15k.jsonl"
-  output_dir: "../ref_models/glm/dd_15k/"
+microsoft/Orca-2-7b:
+  preprocess_dataset_save_path: "../ref_llm_dataset/orca/dd_15k.jsonl"
+  output_dir: "../ref_models/orca/dd_15k/"
   r: 64
   lora_alpha: 16
   lora_dropout: 0.05
@@ -106,8 +106,8 @@ THUDM/glm-4-9b:
   save_strategy: "epoch"
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
-  target_modules: ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h", "output_layer"]
-  bare_prediction_save_dir: "../ref_llm_answers/bare/glm/dd_15k/"
-  finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/glm/dd_15k/"
+  target_modules: ["W_pack", "o_proj", "gate_proj", "down_proj", "up_proj"]
+  bare_prediction_save_dir: "../ref_llm_answers/bare/orca/dd_15k/"
+  finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/orca/dd_15k/"
   prediction_batch_size: 8
   inference_times: 3

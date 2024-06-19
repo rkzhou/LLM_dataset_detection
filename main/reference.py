@@ -11,21 +11,7 @@ import math
 import numpy
 import re
 import peft
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-
-
-def plot_data_lengths(tokenized_dataset):
-    lengths = [len(x['input_ids']) for x in tokenized_dataset]
-    print(len(lengths))
-
-    # Plotting the histogram
-    plt.figure(figsize=(10, 6))
-    plt.hist(lengths, bins=20, alpha=0.7, color='blue')
-    plt.xlabel('Length of input_ids')
-    plt.ylabel('Frequency')
-    plt.title('Distribution of Lengths of input_ids')
-    plt.savefig("tokens_distribution.png")
 
 
 def split_sentence(sentence):
@@ -57,6 +43,8 @@ class reference_model_base():
     def __init__(self, args):
         self.model_name = args["model_name"]
         self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+        if self.model_name == "Qwen/Qwen2-7B":
+            self.tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
         self.model.config.use_cache = False
         self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
         self.finetune_model.config.use_cache = True
@@ -359,13 +347,8 @@ class Qwen(reference_model_base):
     pass
 
 
-class Glm(reference_model_base):
-    def __init__(self, args):
-        self.model_name = args["model_name"]
-        self.model = transformers.AutoModelForCausalLM.from_pretrained(self.model_name, torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto")
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-        self.model.config.use_cache = False
-        self.finetune_model = transformers.AutoModelForCausalLM.from_pretrained(self.model_name, torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto")
+class Orca(reference_model_base):
+    pass
 
 
 def format_dataset(data, dataset_name):
@@ -421,8 +404,8 @@ def fine_tune(args):
         model = Llama3(args)
     elif args["model_name"] == "Qwen/Qwen2-7B":
         model = Qwen(args)
-    elif args["model_name"] == "THUDM/glm-4-9b":
-        model = Glm(args)
+    elif args["model_name"] == "microsoft/Orca-2-7b":
+        model = Orca(args)
     else:
         raise ValueError("Invalid model name")
     
