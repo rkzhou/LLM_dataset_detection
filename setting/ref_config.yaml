@@ -11,128 +11,103 @@ selected_dataset_save_path: "../ref_llm_dataset/selected/dd_15k.pkl"
 mistralai/Mistral-7B-v0.1:
   preprocess_dataset_save_path: "../ref_llm_dataset/mistral/dd_15k.jsonl"
   output_dir: "../ref_models/mistral/dd_15k/"
-  r: 32
-  lora_alpha: 64
+  r: 64
+  lora_alpha: 16
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   optim: "paged_adamw_8bit"
   num_train_epochs: 3.0
   save_strategy: "epoch"
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
-  weight_decay: 0.001
-  warmup_ratio: 0.03
-  group_by_length: True
-  packing: False
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
   bare_prediction_save_dir: "../ref_llm_answers/bare/mistral/dd_15k/"
   finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/mistral/dd_15k/"
-  prediction_batch_size: 1
+  prediction_batch_size: 8
   inference_times: 3
-  pull_answer_format: "[/INST] "
 
 
 google/gemma-7b:
   preprocess_dataset_save_path: "../ref_llm_dataset/gemma/dd_15k.jsonl"
   output_dir: "../ref_models/gemma/dd_15k/"
-  r: 32
-  lora_alpha: 64
+  r: 64
+  lora_alpha: 16
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   optim: "paged_adamw_8bit"
   num_train_epochs: 3.0
   save_strategy: "epoch"
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
-  weight_decay: 0.001
-  warmup_ratio: 0.03
-  group_by_length: True
-  packing: False
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
   bare_prediction_save_dir: "../ref_llm_answers/bare/gemma/dd_15k/"
   finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/gemma/dd_15k/"
-  prediction_batch_size: 1
+  prediction_batch_size: 8
   inference_times: 3
-  pull_answer_format: "model\n"
 
 
 meta-llama/Meta-Llama-3-8B:
   preprocess_dataset_save_path: "../ref_llm_dataset/llama/dd_15k.jsonl"
   output_dir: "../ref_models/llama/dd_15k/"
-  r: 32
-  lora_alpha: 64
+  r: 64
+  lora_alpha: 16
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   optim: "paged_adamw_8bit"
   num_train_epochs: 3.0
   save_strategy: "epoch"
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
-  weight_decay: 0.001
-  warmup_ratio: 0.03
-  group_by_length: True
-  packing: False
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
   bare_prediction_save_dir: "../ref_llm_answers/bare/llama/dd_15k/"
   finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/llama/dd_15k/"
-  prediction_batch_size: 1
+  prediction_batch_size: 8
   inference_times: 3
-  pull_answer_format: "assistant\n\n"
 
 
 Qwen/Qwen2-7B:
   preprocess_dataset_save_path: "../ref_llm_dataset/qwen/dd_15k.jsonl"
   output_dir: "../ref_models/qwen/dd_15k/"
-  r: 32
-  lora_alpha: 64
+  r: 64
+  lora_alpha: 16
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   optim: "paged_adamw_8bit"
   num_train_epochs: 3.0
   save_strategy: "epoch"
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
-  weight_decay: 0.001
-  warmup_ratio: 0.03
-  group_by_length: True
-  packing: False
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
   bare_prediction_save_dir: "../ref_llm_answers/bare/qwen/dd_15k/"
   finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/qwen/dd_15k/"
-  prediction_batch_size: 1
+  prediction_batch_size: 8
   inference_times: 3
-  pull_answer_format: "assistant\n"
 
 
 THUDM/glm-4-9b:
   preprocess_dataset_save_path: "../ref_llm_dataset/glm/dd_15k.jsonl"
   output_dir: "../ref_models/glm/dd_15k/"
-  r: 32
-  lora_alpha: 64
+  r: 64
+  lora_alpha: 16
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   optim: "paged_adamw_8bit"
   num_train_epochs: 3.0
   save_strategy: "epoch"
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
-  weight_decay: 0.001
-  warmup_ratio: 0.03
-  group_by_length: True
-  packing: False
   target_modules: ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h", "output_layer"]
   bare_prediction_save_dir: "../ref_llm_answers/bare/glm/dd_15k/"
   finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/glm/dd_15k/"
-  prediction_batch_size: 1
+  prediction_batch_size: 8
   inference_times: 3
-  pull_answer_format: "question"

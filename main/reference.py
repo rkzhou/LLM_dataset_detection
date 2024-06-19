@@ -5,14 +5,28 @@ import utils
 import json
 import peft
 import transformers
-import trl
 import datasets
 import torch
 import math
 import numpy
 import re
 import peft
+import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+
+def plot_data_lengths(tokenized_dataset):
+    lengths = [len(x['input_ids']) for x in tokenized_dataset]
+    print(len(lengths))
+
+    # Plotting the histogram
+    plt.figure(figsize=(10, 6))
+    plt.hist(lengths, bins=20, alpha=0.7, color='blue')
+    plt.xlabel('Length of input_ids')
+    plt.ylabel('Frequency')
+    plt.title('Distribution of Lengths of input_ids')
+    plt.savefig("tokens_distribution.png")
+
 
 def split_sentence(sentence):
     return re.findall(r'\b\w+\b', sentence)
@@ -30,6 +44,12 @@ def tokenize_text(data, tokenizer):
         "labels": [-100] * len(encoded_bos + encoded_prompt) + encoded_response + encoded_eos,
     }
 
+    max_length = 512
+    if len(sample["input_ids"]) > 512:
+        sample["input_ids"] = sample["input_ids"][:max_length]
+        sample["attention_mask"] = sample["attention_mask"][:max_length]
+        sample["labels"] = sample["labels"][:max_length]
+
     return sample
 
 
@@ -38,48 +58,22 @@ class reference_model_base():
         self.model_name = args["model_name"]
         self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
         self.model.config.use_cache = False
-        self.finetune_model, _ = utils.get_pretrained_model_and_tokenizer(self.model_name)
+        self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+        self.finetune_model.config.use_cache = True
+        self.finetune_tokenizer.add_bos_token = True
 
 
     # this function is used to output the right formate for each row in the dataset
     def create_text_row(self, system_prompt, user_prompt, assistant_response):
-        # # mistral and gemma do not support system role
-        # if self.model_name in ["mistralai/Mistral-7B-Instruct-v0.2", "google/gemma-7b-it"]:
-        #     if system_prompt == "":
-        #         messages = [
-        #         {"role": "user", "content": user_prompt},
-        #         {"role": "assistant", "content": assistant_response},
-        #         ]
-        #     else:
-        #         messages = [
-        #         {"role": "user", "content": system_prompt + " " + user_prompt},
-        #         {"role": "assistant", "content": assistant_response},
-        #         ]
-        # else:
-        #     if system_prompt == "":
-        #         messages = [
-        #         {"role": "user", "content": user_prompt},
-        #         {"role": "assistant", "content": assistant_response},
-        #         ]
-        #     else:
-        #         messages = [
-        #         {"role": "system", "content": system_prompt},
-        #         {"role": "user", "content": user_prompt},
-        #         {"role": "assistant", "content": assistant_response},
-        #         ]
-        
-        # input_ids = self.tokenizer.apply_chat_template(messages, return_tensors="pt")
-        # text_row = self.tokenizer.decode(input_ids[0].tolist())
-        
         if system_prompt == "":
             messages = [
-                "### Question: {}".format(user_prompt),
-                "### Answer: {}".format(assistant_response),
+                "### Question: {} ### Answer: ".format(user_prompt),
+                assistant_response,
             ]
         else:
             messages = [
-                "### Question: {} {}".format(system_prompt, user_prompt),
-                "### Answer: {}".format(assistant_response),
+                "### Question: {} {} ### Answer: ".format(system_prompt, user_prompt),
+                assistant_response,
             ]
 
         return messages
@@ -128,7 +122,7 @@ class reference_model_base():
 
     def train(self, args):
         train_dataset = datasets.load_dataset('json', data_files=args[self.model_name]["preprocess_dataset_save_path"], split="train")
-        train_dataset = train_dataset.map(tokenize_text, fn_kwargs={"tokenizer": self.tokenizer}, remove_columns=train_dataset.column_names)
+        train_dataset = train_dataset.map(tokenize_text, remove_columns=train_dataset.column_names, fn_kwargs={"tokenizer": self.tokenizer})
 
         self.model = peft.prepare_model_for_kbit_training(self.model)
         lora_config = peft.LoraConfig(
@@ -162,14 +156,11 @@ class reference_model_base():
             data_collator=transformers.DataCollatorForSeq2Seq(self.tokenizer),
         )
 
-
         trainer.train()
-        final_model_save_path = args[self.model_name]["output_dir"] + "final_model"
-        trainer.model.save_pretrained(final_model_save_path)
     
 
     def predict(self, args):
-        final_model_path = args[self.model_name]["output_dir"] + "final_model"
+        final_model_path = args[self.model_name]["output_dir"] + "checkpoint-5631"
         self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
 
         if args["saved_dataset"] != "None":
@@ -278,17 +269,12 @@ class reference_model_base():
                 data_index = args[self.model_name]["prediction_batch_size"] * group_index + i
                 if data_index < len(dataset):
                     data = dataset[data_index]
-                    format_data = list()
-                    if self.model_name in ["mistralai/Mistral-7B-Instruct-v0.2", "google/gemma-7b-it"]:
-                        if data["system"] == "":
-                            format_data.append({"role": "user", "content": data["instruction"]})
-                        else:
-                            format_data.append({"role": "user", "content": data["system"] + " " + data["instruction"]})
+                    if data["system"] == "":
+                        prompt = "### Question: {} ### Answer: ".format(data["instruction"])
                     else:
-                        format_data.append({"role": "system", "content": data["system"]})
-                        format_data.append({"role": "user", "content": data["instruction"]})
+                        prompt = "### Question: {} {} ### Answer: ".format(data["system"], data["instruction"])
+                    raw_prompt_list.append(prompt)
                     benchmark_answer_list.append(data["response"])
-                    raw_prompt_list.append(format_data)
             
             ### split benchmark answers into tokens
             benchmark_split_token_list, model_split_token_list = list(), list()
@@ -296,27 +282,19 @@ class reference_model_base():
                 split_tokens = split_sentence(benchmark_answer)
                 benchmark_split_token_list.append(split_tokens)
 
-            ### infering models or pipelines to get answers with multiple times
+            ### infering reference models to get answers with multiple times
             for times in range(args[self.model_name]["inference_times"]):
-                prompt_list = list()
-                for input in raw_prompt_list:
-                    prompt = self.tokenizer.apply_chat_template(input, add_generation_prompt=True, tokenize=False)
-                    prompt_list.append(prompt)
+                encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, return_tensors='pt').to("cuda")
+                generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
+                responses = self.finetune_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
-                encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt', add_special_tokens=False)
-                encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
-                generated_ids = self.model.generate(**encoded_inputs, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
-                responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-                if args[self.model_name]["pull_answer_format"] != None:
-                    if args[self.model_name]["pull_answer_format"] == "question":
-                        answer = self.pull_answer(responses, args[self.model_name]["pull_answer_format"], raw_prompt_list)
-                    else:
-                        answer = self.pull_answer(responses, args[self.model_name]["pull_answer_format"])
-                    model_answer_list.append(answer)
-                else:
-                    model_answer_list.append(responses)
-
+                current_time_answers = list()
+                for response in responses:
+                    answer = response.split("### Answer: ")[-1]
+                    current_time_answers.append(answer)
+                
+                model_answer_list.append(current_time_answers)
+            
             ### split model answers into tokens (multiple times)
             for model_answers in model_answer_list:
                 answers_split_tokens = list()
