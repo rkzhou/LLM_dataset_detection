@@ -347,7 +347,7 @@ class Qwen(reference_model_base):
     pass
 
 
-class Orca(reference_model_base):
+class Stablelm(reference_model_base):
     pass
 
 
@@ -404,8 +404,8 @@ def fine_tune(args):
         model = Llama3(args)
     elif args["model_name"] == "Qwen/Qwen2-7B":
         model = Qwen(args)
-    elif args["model_name"] == "microsoft/Orca-2-7b":
-        model = Orca(args)
+    elif args["model_name"] == "stabilityai/stablelm-2-1_6b":
+        model = Stablelm(args)
     else:
         raise ValueError("Invalid model name")
     

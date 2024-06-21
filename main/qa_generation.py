@@ -23,35 +23,6 @@ def fetch_dataset(args, name, hf_path):
     return dataset
 
 
-def mean_pooling(model_output, attention_mask):
-    token_embeddings = model_output[0] #First element of model_output contains all token embeddings
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-                                                                              
-
-def split_sentence(sentence):
-    return re.findall(r'\b\w+\b', sentence)
-
-
-def calculate_match_score(dict):
-    benchmark_answer_set = set(split_sentence(dict['benchmark_answer']))
-    member_answer_set = set(split_sentence(dict['member_answer']))
-    nonmember_answer_set = set(split_sentence(dict['nonmember_answer']))
-
-    bm_common = benchmark_answer_set.intersection(member_answer_set)
-    bn_common = benchmark_answer_set.intersection(nonmember_answer_set)
-
-    bm_common_ratio = len(bm_common) / len(benchmark_answer_set)
-    bn_common_ratio = len(bn_common) / len(benchmark_answer_set)
-
-    if bm_common_ratio == 1.0 and bn_common_ratio == 1.0:
-        mem_penalty = len(benchmark_answer_set) / len(member_answer_set) - 1.0
-        nonmem_penalty = len(benchmark_answer_set) / len(nonmember_answer_set) - 1.0
-        return mem_penalty, nonmem_penalty
-
-    return bm_common_ratio, bn_common_ratio
-
-
 def generate_answers(args):
     if args["saved_dataset"] != "None":
         with open(args["saved_dataset"], "rb") as file:
@@ -72,14 +43,17 @@ def generate_answers(args):
         select_category_list = ["closed_qa", "open_qa", "general_qa"]
         dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
 
-    data_group_num = math.ceil(len(dataset) / args["batch_size"])
+    data_group_num = math.ceil(len(dataset) / args["inference_batch_size"])
 
     ### initialize model or pipeline
     if args["model_type"] == "pipeline":
         pipeline_tokenizer = AutoTokenizer.from_pretrained(args["model_name"], padding_side="left")
-        pipe = pipeline(model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["batch_size"], tokenizer=pipeline_tokenizer)
+        if args["pipeline_prefix"] == "None":
+            pipe = pipeline(model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["inference_batch_size"], tokenizer=pipeline_tokenizer)
+        else:
+            pipe = pipeline(args["pipeline_prefix"], model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["inference_batch_size"], tokenizer=pipeline_tokenizer)
     elif args["model_type"] == "kernel":
-        valid_model_template = [index for index in range(6)]
+        valid_model_template = [index for index in range(7)]
         if args["model_template"] in valid_model_template:
             function_to_call = "Chatmodel_{}".format(args["model_template"])
             llm_model = getattr(preprocess, function_to_call)(args["model_name"])
@@ -88,271 +62,88 @@ def generate_answers(args):
     else:
         raise ValueError("Invalid Model Type")
     
-    if not os.path.exists(args["answer_root"]):
-        os.makedirs(args["answer_root"])
+    if not os.path.exists(args["answer_directory"]):
+        os.makedirs(args["answer_directory"])
 
-    model_scores = list()
-    cos_simi = torch.nn.CosineSimilarity(dim=0)
+
     saved_answer_num = 0
     ### loop every batch of questions
     for group_index in tqdm(range(data_group_num)):
-        current_group_complete = False
         current_group_saved_answer_num = 0
         ### check if answers have been already saved
-        for i in range(args["batch_size"]):
-            data_index = group_index * args["batch_size"] + i
-            if os.path.exists("{}/answer_{}.pkl".format(args["answer_root"], data_index)):
+        for i in range(args["inference_batch_size"]):
+            data_index = group_index * args["inference_batch_size"] + i
+            if os.path.exists("{}/answer_{}.pkl".format(args["answer_directory"], data_index)):
                 saved_answer_num += 1
                 current_group_saved_answer_num += 1
-                with open("{}/answer_{}.pkl".format(args["answer_root"], data_index), 'rb') as file:
-                    saved_model_answer = pickle.load(file)
-                
-                if args["dataset_name"] == "databricks/databricks-dolly-15k":
-                    benchmark_answer = dataset[data_index]["response"]
-                elif args["dataset_name"] == "tatsu-lab/alpaca":
-                    benchmark_answer = dataset[data_index]["output"]
-                elif args["dataset_name"] == "Open-Orca/SlimOrca":
-                    benchmark_answer = dataset[data_index]["conversations"][2]["value"]
-                elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
-                    benchmark_answer = dataset[data_index]["messages"][1]["content"]
-                benchmark_split_tokens = split_sentence(benchmark_answer)
-                model_split_tokens = split_sentence(saved_model_answer)
-
-                vocab = list(set(benchmark_split_tokens + model_split_tokens))
-                vocab_size = len(vocab)
-                benchmark_tfidf = torch.zeros(vocab_size)
-                model_tfidf = torch.zeros(vocab_size)
-
-                for token in benchmark_split_tokens:
-                    position = vocab.index(token)
-                    benchmark_tfidf[position] += 1
-                for token in model_split_tokens:
-                    position = vocab.index(token)
-                    model_tfidf[position] += 1
-
-                similarity_score = cos_simi(benchmark_tfidf, model_tfidf)
-                similarity_score = torch.clamp(similarity_score, min=0.0, max=1.0).item()
-
-                model_scores.append(similarity_score)
-            if data_index >= len(dataset):
-                print("Reach the end of dataset")
-                model_scores = numpy.array(model_scores)
-                scores_tensor = torch.flatten(torch.Tensor(model_scores))
-                torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
-                exit()
-        if current_group_saved_answer_num == args["batch_size"]:
-            current_group_complete = True
-        
-        if saved_answer_num >= args["early_stop_num"] and args["early_stop_flag"] == True:
-            model_scores = numpy.array(model_scores)
-            scores_tensor = torch.flatten(torch.Tensor(model_scores))
-            torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
+            
+        if saved_answer_num == len(dataset):
+            print("Generated all answers of prompts")
             exit()
-        elif current_group_complete == True:
+        
+        if current_group_saved_answer_num == args["inference_batch_size"]:
             continue
+        else:
+            begin_index = group_index * args["inference_batch_size"] + current_group_saved_answer_num
+            end_index = min(len(dataset), (group_index + 1) * args["inference_batch_size"])
 
         raw_prompt_list = list()
-        benchmark_answer_list = list()
-        model_answer_list = list()
         
         ### preprocess prompt
-        for i in range(args["batch_size"]):
-            data_index = args["batch_size"] * group_index + i
-            if data_index < len(dataset):
-                data = dataset[data_index]
-                format_data = list()
-                if args["dataset_name"] == "databricks/databricks-dolly-15k":
-                    format_data.append({"role": "system", "content": ""})
-                    format_data.append({"role": "user", "content": data["context"] + " " + data["instruction"]})
-                    benchmark_answer_list.append(data["response"])
-                elif args["dataset_name"] == "tatsu-lab/alpaca":
-                    format_data.append({"role": "system", "content": ""})
-                    format_data.append({"role": "user", "content": data["input"] + " " + data["instruction"]})
-                    benchmark_answer_list.append(data["output"])
-                elif args["dataset_name"] == "Open-Orca/SlimOrca":
-                    format_data.append({"role": "system", "content": data["conversations"][0]["value"]})
-                    format_data.append({"role": "user", "content": data["conversations"][1]["value"]})
-                    benchmark_answer_list.append(data["conversations"][2]["value"])
-                elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
-                    format_data.append({"role": "system", "content": ""})
-                    format_data.append({"role": "user", "content": data["prompt"]})
-                    benchmark_answer_list.append(data["messages"][1]["content"])
-                raw_prompt_list.append(format_data)
+        data_index_list = [i for i in range(begin_index, end_index)]
+        for data_index in data_index_list:
+            data = dataset[data_index]
+            format_data = list()
+            if args["dataset_name"] == "databricks/databricks-dolly-15k":
+                format_data.append({"role": "system", "content": ""})
+                format_data.append({"role": "user", "content": data["context"] + " " + data["instruction"]})
+            elif args["dataset_name"] == "tatsu-lab/alpaca":
+                format_data.append({"role": "system", "content": ""})
+                format_data.append({"role": "user", "content": data["input"] + " " + data["instruction"]})
+            elif args["dataset_name"] == "Open-Orca/SlimOrca":
+                format_data.append({"role": "system", "content": data["conversations"][0]["value"]})
+                format_data.append({"role": "user", "content": data["conversations"][1]["value"]})
+            elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+                format_data.append({"role": "system", "content": ""})
+                format_data.append({"role": "user", "content": data["prompt"]})
+            raw_prompt_list.append(format_data)
+
         
-        ### split benchmark answers into tokens
-        benchmark_split_token_list, model_split_token_list = list(), list()
-        for benchmark_answer in benchmark_answer_list:
-            split_tokens = split_sentence(benchmark_answer)
-            benchmark_split_token_list.append(split_tokens)
-
-        ### infering models or pipelines to get answers with multiple times
-        for times in range(args["inference_times"]):
-            if args["model_type"] == "pipeline":
-                pipeline_prompt_list = list()
-                for prompt in raw_prompt_list:
-                    input_prompt = prompt[0]["content"] + prompt[1]["content"]
-                    pipeline_prompt_list.append(input_prompt)
-                response = pipe(pipeline_prompt_list, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
-                current_time_model_answers = list()
-                for i in range(len(response)):
-                    answer = response[i][0]["generated_text"]
-                    current_time_model_answers.append(answer)
-                model_answer_list.append(current_time_model_answers)
-            elif args["model_type"] == "kernel":
-                prompt = llm_model.preprocess_prompt(raw_prompt_list)
-                response = llm_model.generate_response(prompt)
-                if args["pull_answer_format"] != None:
-                    if args["pull_answer_format"] == "question":
-                        answer = llm_model.pull_answer(response, args["pull_answer_format"], raw_prompt_list)
-                    else:
-                        answer = llm_model.pull_answer(response, args["pull_answer_format"])
-                    model_answer_list.append(answer)
+        if args["model_type"] == "pipeline":
+            pipeline_prompt_list = list()
+            for prompt in raw_prompt_list:
+                system_message, user_prompt = "", ""
+                for i in range(len(prompt)):
+                    if prompt[i]["role"] == "system":
+                        system_message = prompt[i]["content"]
+                    elif prompt[i]["role"] == "user":
+                        user_prompt = prompt[i]["content"]
+                if system_message == "":
+                    input_prompt = user_prompt
                 else:
-                    model_answer_list.append(response)
-
-        ### split model answers into tokens (multiple times)
-        for model_answers in model_answer_list:
-            answers_split_tokens = list()
-            for answer in model_answers:
-                split_tokens = split_sentence(answer)
-                answers_split_tokens.append(split_tokens)
-            model_split_token_list.append(answers_split_tokens)
-        
-        ### calculate the similarity score and save the best answer
-        for answer_index in range(len(benchmark_answer_list)):
-            best_score = 0
-            best_index = -1
-
-            total_tokens = list()
-            total_tokens += benchmark_split_token_list[answer_index]
-            for times in range(args["inference_times"]):
-                total_tokens += model_split_token_list[times][answer_index]
-            vocab = list(set(total_tokens))
-            vocab_size = len(vocab)
-            benchmark_tfidf = torch.zeros(vocab_size)
-            for token in benchmark_split_token_list[answer_index]:
-                position = vocab.index(token)
-                benchmark_tfidf[position] += 1
-            
-            model_tfidf = torch.zeros([args["inference_times"], vocab_size])
-            for times in range(args["inference_times"]):
-                for token in model_split_token_list[times][answer_index]:
-                    position = vocab.index(token)
-                    model_tfidf[times][position] += 1
-
-            for times in range(args["inference_times"]):
-                similarity_score = cos_simi(benchmark_tfidf, model_tfidf[times, :])
-                similarity_score = torch.clamp(similarity_score, min=0.0, max=1.0).item()
-                if similarity_score > best_score:
-                    best_score = similarity_score
-                    best_index = times
-            
-            data_index = args["batch_size"] * group_index + answer_index
-            with open("{}/answer_{}.pkl".format(args["answer_root"], data_index), 'wb') as file:
-                pickle.dump(model_answer_list[best_index][answer_index], file)
-            model_scores.append(best_score)
-
-        final_data_index = args["batch_size"] * group_index + len(benchmark_answer_list)
-        if final_data_index >= (args["early_stop_num"] - 1) and args["early_stop_flag"] == True:
-            break
-    
-    model_scores = numpy.array(model_scores)
-    scores_tensor = torch.flatten(torch.Tensor(model_scores))
-
-    torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
-
-
-def compare_diff_metric(args):
-    if args["saved_dataset"] != "None":
-        with open(args["saved_dataset"], "rb") as file:
-            dataset = pickle.load(file)
-    else:
-        dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    
-    if args["saved_category"] != "None":
-        with open(args["saved_category"], "rb") as file:
-            data_category = pickle.load(file)
-    
-        data_selection = list()
-        for i in range(len(data_category)):
-            if data_category[i] == "qa":
-                data_selection.append(i)
-        dataset = dataset.select(data_selection)
-    else: # for dd_15k dataset
-        select_category_list = ["closed_qa", "open_qa", "general_qa"]
-        dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
-
-    data_group_num = math.ceil(len(dataset) / args["batch_size"])
-
-    model_scores = list()
-    cos_simi = torch.nn.CosineSimilarity(dim=0)
-    semantic_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-    saved_answer_num = 0
-    ### loop every batch of questions
-    for group_index in tqdm(range(data_group_num)):
-        ### check if answers have been already saved
-        for i in range(args["batch_size"]):
-            data_index = group_index * args["batch_size"] + i
-            if os.path.exists("{}/answer_{}.pkl".format(args["answer_root"], data_index)):
-                saved_answer_num += 1
-                with open("{}/answer_{}.pkl".format(args["answer_root"], data_index), 'rb') as file:
-                    saved_model_answer = pickle.load(file)
-                
-                if args["dataset_name"] == "databricks/databricks-dolly-15k":
-                    benchmark_answer = dataset[data_index]["response"]
-                elif args["dataset_name"] == "tatsu-lab/alpaca":
-                    benchmark_answer = dataset[data_index]["output"]
-                elif args["dataset_name"] == "Open-Orca/SlimOrca":
-                    benchmark_answer = dataset[data_index]["conversations"][2]["value"]
-                elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
-                    benchmark_answer = dataset[data_index]["messages"][1]["content"]
-                
-                # TF-IDF similarity calculation
-                benchmark_split_tokens = split_sentence(benchmark_answer)
-                model_split_tokens = split_sentence(saved_model_answer)
-
-                vocab = list(set(benchmark_split_tokens + model_split_tokens))
-                vocab_size = len(vocab)
-                benchmark_tfidf = torch.zeros(vocab_size)
-                model_tfidf = torch.zeros(vocab_size)
-
-                for token in benchmark_split_tokens:
-                    position = vocab.index(token)
-                    benchmark_tfidf[position] += 1
-                for token in model_split_tokens:
-                    position = vocab.index(token)
-                    model_tfidf[position] += 1
-                TF_IDF_similarity_score = cos_simi(benchmark_tfidf, model_tfidf)
-                TF_IDF_similarity_score = torch.clamp(TF_IDF_similarity_score, min=0.0, max=1.0).item()
-
-                # textual semantic similarity calculation
-                compare_answers = [benchmark_answer, saved_model_answer]
-                semantic_embeddings = semantic_model.encode(compare_answers)
-                semantic_embeddings = torch.from_numpy(semantic_embeddings)
-                semantic_similarity_score = cos_simi(semantic_embeddings[0, :], semantic_embeddings[1, :])
-                semantic_similarity_score = torch.clamp(semantic_similarity_score, min=0.0, max=1.0).item()
-
-                if args["metric"] == "TF-IDF":
-                    model_scores.append(TF_IDF_similarity_score)
-                elif args["metric"] == "semantic":
-                    model_scores.append(semantic_similarity_score)
-                elif args["metric"] == "TF+semantic":
-                    scores_sum = 0.2 * TF_IDF_similarity_score + 0.8 * semantic_similarity_score
-                    model_scores.append(scores_sum)
+                    input_prompt = system_message + " " + user_prompt
+                pipeline_prompt_list.append(input_prompt)
+            responses = pipe(pipeline_prompt_list, max_new_tokens=256)
+            answers = list()
+            for i in range(len(responses)):
+                answer = responses[i][0]["generated_text"]
+                answers.append(answer)
+        elif args["model_type"] == "kernel":
+            prompts = llm_model.preprocess_prompt(raw_prompt_list)
+            responses = llm_model.generate_response(prompts)
+            if args["pull_answer_format"] != None:
+                if args["pull_answer_format"] == "question":
+                    answers = llm_model.pull_answer(responses, args["pull_answer_format"], raw_prompt_list)
                 else:
-                    raise ValueError("Invalid comparison metric")
-            
+                    answers = llm_model.pull_answer(responses, args["pull_answer_format"])
             else:
-                raise ValueError("Please generate all answers first")
-            
-    model_scores = numpy.array(model_scores)
-    scores_tensor = torch.flatten(torch.Tensor(model_scores))
-    torch.save(scores_tensor, "{}/answer_scores.pt".format(args["answer_root"]))
-    print("END")
+                answers = responses
+        
+        for i in range(len(data_index_list)):
+            torch.save(answers[i], "{}/answer_{}.pkl".format(args["answer_directory"], data_index_list[i]))
+
 
 if __name__ == '__main__':
     with open(os.path.join("../setting", "qa_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
-    #generate_answers(global_cfg)
-
-    compare_diff_metric(global_cfg)
+    generate_answers(global_cfg)
