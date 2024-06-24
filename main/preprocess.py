@@ -202,6 +202,7 @@ class Chatmodel_5(model_base):
 
         return encoded_inputs
 
+
 class Chatmodel_6(model_base):
     '''
     <|prompter|><input><|endoftext|><|assistant|>
@@ -227,4 +228,35 @@ class Chatmodel_6(model_base):
         encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
+        return encoded_inputs
+
+
+class Chatmodel_7(model_base):
+    '''
+    ### System:
+    {system_prompt}
+    ### User:
+    {user_prompt}
+    ### Assistant:
+    '''
+    
+    def preprocess_prompt(self, inputs):
+        prompt_list = list()
+        for input in inputs:
+            system_message, user_prompt = "", ""
+            for i in range(len(input)):
+                if input[i]["role"] == "system":
+                    system_message = input[i]["content"]
+                elif input[i]["role"] == "user":
+                    user_prompt = input[i]["content"]
+            
+            if system_message == "":
+                prompt = "### User:\n{}\n### Assistant:\n".format(user_prompt)
+            else:
+                prompt = "### System:\n{}\n### User:\n{}\n### Assistant:\n".format(system_message, user_prompt)
+            prompt_list.append(prompt)
+
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
+        
         return encoded_inputs

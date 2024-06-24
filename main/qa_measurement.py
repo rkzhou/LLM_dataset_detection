@@ -1,12 +1,13 @@
 import torch
 import pickle
-
-from transformers import AutoTokenizer, AutoModel
 import torch.nn.functional as F
 import re
-import numpy as np
-import utils
+import os
+
+from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import util
+from tqdm import tqdm
+
 
 def mean_pooling(model_output, attention_mask):
     token_embeddings = model_output[0] #First element of model_output contains all token embeddings
@@ -32,31 +33,10 @@ def measure_sentences(dict):
     similarity_score1 = util.pytorch_cos_sim(sentence_embeddings[0], sentence_embeddings[2]).cpu()
 
     return similarity_score0, similarity_score1
-    
-    
 
 
 def split_sentence(sentence):
     return re.findall(r'\b\w+\b', sentence)
-
-
-def calculate_match_score(dict):
-    benchmark_answer_set = set(split_sentence(dict['benchmark_answer']))
-    member_answer_set = set(split_sentence(dict['member_answer']))
-    nonmember_answer_set = set(split_sentence(dict['nonmember_answer']))
-
-    bm_common = benchmark_answer_set.intersection(member_answer_set)
-    bn_common = benchmark_answer_set.intersection(nonmember_answer_set)
-
-    bm_common_ratio = len(bm_common) / len(benchmark_answer_set)
-    bn_common_ratio = len(bn_common) / len(benchmark_answer_set)
-
-    if bm_common_ratio == 1.0 and bn_common_ratio == 1.0:
-        mem_penalty = len(benchmark_answer_set) / len(member_answer_set) - 1.0
-        nonmem_penalty = len(benchmark_answer_set) / len(nonmember_answer_set) - 1.0
-        return mem_penalty, nonmem_penalty
-
-    return bm_common_ratio, bn_common_ratio
 
 
 def thresholding_tensor(tensor_path, threshold, specific_index=None):
@@ -75,24 +55,104 @@ def thresholding_tensor(tensor_path, threshold, specific_index=None):
 
     return larger_threshold_num
 
+
+def compare_answers(model_answer_dir, dataset_local_name):
+    ### load answers of reference models before and after fine-tuning
+    bare_prefix = "../ref_llm_answers/bare"
+    finetuned_prefix = "../ref_llm_answers/finetuned"
+
+    vocab_set = set()
+
+    bare_model_list = os.listdir(bare_prefix)
+    for name in bare_model_list:
+        bare_reference_answer_path = "{}/{}/{}".format(bare_prefix, name, dataset_local_name)
+        answer_list = os.listdir(bare_reference_answer_path)
+        for answer_index in range(len(answer_list)):
+            with open("{}/answer_{}.pkl".format(bare_reference_answer_path, answer_index), "rb") as answer_file:
+                answer = pickle.load(answer_file)
+                token_list = split_sentence(answer)
+                for token in token_list:
+                    vocab_set.add(token)
+            answer_file.close()
+    
+    finetuned_model_list = os.listdir(finetuned_prefix)
+    for name in finetuned_model_list:
+        finetuned_reference_answer_path = "{}/{}/{}".format(finetuned_prefix, name, dataset_local_name)
+        answer_list = os.listdir(finetuned_reference_answer_path)
+        for answer_index in range(len(answer_list)):
+            with open("{}/answer_{}.pkl".format(finetuned_reference_answer_path, answer_index), "rb") as answer_file:
+                answer = pickle.load(answer_file)
+                token_list = split_sentence(answer)
+                for token in token_list:
+                    vocab_set.add(token)
+            answer_file.close()
+    
+    verify_answer_list = os.listdir(model_answer_dir)
+    for answer_index in range(len(verify_answer_list)):
+        # with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
+        #     answer = torch.load(answer_file, map_location="cpu")
+        # with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "wb") as answer_file:
+        #     pickle.dump(answer, answer_file)
+        with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
+            answer = pickle.load(answer_file)
+            token_list = split_sentence(answer)
+            for token in token_list:
+                vocab_set.add(token)
+        answer_file.close()
+    
+    vocab_list = list(vocab_set)
+    vocab_size = len(vocab_list)
+    reference_model_num = len(bare_model_list)
+    similarity_scores = torch.zeros(2*reference_model_num, len(verify_answer_list))
+    cos_simi = torch.nn.CosineSimilarity(dim=0)
+
+    for answer_index in tqdm(range(len(verify_answer_list))):
+        bare_answers_vec = torch.zeros(reference_model_num, vocab_size)
+        finetuned_answers_vec = torch.zeros(reference_model_num, vocab_size)
+        verify_answer_vec = torch.zeros(vocab_size)
+        for name_index in range(len(bare_model_list)):
+            bare_answer_path = "{}/{}/{}/answer_{}.pkl".format(bare_prefix, bare_model_list[name_index], dataset_local_name, answer_index)
+            with open(bare_answer_path, "rb") as bare_answer_file:
+                bare_answer = pickle.load(bare_answer_file)
+                bare_token_list = split_sentence(bare_answer)
+                for token in bare_token_list:
+                    token_index = vocab_list.index(token)
+                    bare_answers_vec[name_index][token_index] += 1
+            bare_answer_file.close()
+
+        for name_index in range(len(finetuned_model_list)):
+            finetuned_answer_path = "{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, finetuned_model_list[name_index], dataset_local_name, answer_index)
+            with open(finetuned_answer_path, "rb") as finetuned_answer_file:
+                finetuned_answer = pickle.load(finetuned_answer_file)
+                finetuned_token_list = split_sentence(finetuned_answer)
+                for token in finetuned_token_list:
+                    token_index = vocab_list.index(token)
+                    finetuned_answers_vec[name_index][token_index] += 1
+            finetuned_answer_file.close()
+        
+        verify_answer_path = "{}/answer_{}.pkl".format(model_answer_dir, answer_index)
+        with open(verify_answer_path, "rb") as verify_answer_file:
+            verify_answer = pickle.load(verify_answer_file)
+            verify_token_list = split_sentence(verify_answer)
+            for token in verify_token_list:
+                token_index = vocab_list.index(token)
+                verify_answer_vec[token_index] += 1
+        verify_answer_file.close()
+
+        for i in range(reference_model_num):
+            score = cos_simi(verify_answer_vec, bare_answers_vec[i, :])
+            similarity_scores[i, answer_index] = score
+        
+        for i in range(reference_model_num):
+            score = cos_simi(verify_answer_vec, finetuned_answers_vec[i, :])
+            similarity_scores[i+reference_model_num, answer_index] = score
+        
+    torch.save(similarity_scores, "{}/answer_scores.pt".format(model_answer_dir))
+
+
 if __name__ == '__main__':
-    # print("member models:\n")
-    # model_name = ["falcon1B"]
-    # dataset_name = "einstein7B"
-    # thres = 0.7
-    # for name in model_name:
-    #  thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
-    #  print(thres_num)
+    # thres_list = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
+    # for thres in thres_list:
+    #     print(thresholding_tensor("../ref_llm_answers/bare/glm/dd_15k/answer_scores.pt", thres))
 
-
-    # print("nonmember models:\n")
-    # model_name = [""]
-    # dataset_name = ""
-    # thres = 0.7
-    # for name in model_name:
-    #    thres_num = thresholding_tensor("../answers/{}/{}/answer_scores.pt".format(dataset_name, name), thres)
-    #    print(thres_num)
-
-    thres_list = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
-    for thres in thres_list:
-        print(thresholding_tensor("../answers/slimorca/monarch7B/answer_scores.pt", thres))
+    compare_answers("../answers/dd_15k/bloom3B", "dd_15k")

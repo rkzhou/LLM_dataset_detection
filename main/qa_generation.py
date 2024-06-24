@@ -140,7 +140,8 @@ def generate_answers(args):
                 answers = responses
         
         for i in range(len(data_index_list)):
-            torch.save(answers[i], "{}/answer_{}.pkl".format(args["answer_directory"], data_index_list[i]))
+            with open("{}/answer_{}.pkl".format(args["answer_directory"], data_index_list[i]), "wb") as file:
+                pickle.dump(answers[i], file)
 
 
 if __name__ == '__main__':
