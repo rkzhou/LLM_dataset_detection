@@ -3,10 +3,17 @@ import pickle
 import torch.nn.functional as F
 import re
 import os
+import evaluate
+import utils
+import transformers
+import math
 
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import util
 from tqdm import tqdm
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy import stats
 
 
 def mean_pooling(model_output, attention_mask):
@@ -15,24 +22,54 @@ def mean_pooling(model_output, attention_mask):
     return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
-def measure_sentences(dict):
-    sen_tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
-    sen_model = AutoModel.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
+def measure_sentences(dict, metric):
+    if metric == "BERTscore":
+        bertscore = evaluate.load("bertscore")
+        results = bertscore.compute(predictions=dict["candidate_answers"], references=dict["reference_answers"], lang="en")
+        
+        average_precision = round(sum(results["precision"])/len(results["precision"]), 2)
+        average_recall = round(sum(results["recall"])/len(results["recall"]), 2)
+        average_f1 = round(sum(results["f1"])/len(results["f1"]), 2)
+
+        similarity_score = {"avg_precision": average_precision, "avg_recall": average_recall, "avg_f1": average_f1}
+    elif metric == "BLEU":
+        bleu = evaluate.load("bleu")
+        results = bleu.compute(predictions=dict["candidate_answers"], references=dict["reference_answers"])
+        similarity_score = results
+    else:
+        raise ValueError("Invalid metric")
+    
+    return similarity_score
 
 
-    saved_answer_list = [dict["benchmark_answer"], dict["member_answer"], dict["nonmember_answer"]]
-    encoded_input = sen_tokenizer(saved_answer_list, padding=True, truncation=True, return_tensors='pt')
+def measure_robustness(candidate_answer_path, reference_answer_path, metric):
+    candidate_answer_files = os.listdir(candidate_answer_path)
+    reference_answer_files = os.listdir(reference_answer_path)
+    candidate_answer_files.remove("answer_scores.pt")
+    reference_answer_files.remove("answer_scores.pt")
 
-    with torch.no_grad():
-        model_output = sen_model(**encoded_input)
 
-    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
-    sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+    if len(candidate_answer_files) != len(reference_answer_files):
+        raise ValueError("The numbers of answers are not same")
 
-    similarity_score0 = util.pytorch_cos_sim(sentence_embeddings[0], sentence_embeddings[1]).cpu()
-    similarity_score1 = util.pytorch_cos_sim(sentence_embeddings[0], sentence_embeddings[2]).cpu()
+    candidate_answers_list, reference_answers_list = list(), list()
+    for answer_index in range(len(candidate_answer_files)):
+        with open("{}/answer_{}.pkl".format(candidate_answer_path, answer_index), "rb") as answer_file:
+            candidate_answer = pickle.load(answer_file)
+        answer_file.close()
 
-    return similarity_score0, similarity_score1
+        with open("{}/answer_{}.pkl".format(reference_answer_path, answer_index), "rb") as answer_file:
+            reference_answer=pickle.load(answer_file)
+        answer_file.close()
+
+        candidate_answers_list.append(candidate_answer)
+        reference_answers_list.append(reference_answer)
+    
+    answer_dict = {"candidate_answers": candidate_answers_list, "reference_answers": reference_answers_list}
+
+    similarity_score = measure_sentences(answer_dict, metric)
+
+    return similarity_score
 
 
 def split_sentence(sentence):
@@ -56,103 +93,251 @@ def thresholding_tensor(tensor_path, threshold, specific_index=None):
     return larger_threshold_num
 
 
-def compare_answers(model_answer_dir, dataset_local_name):
-    ### load answers of reference models before and after fine-tuning
+def compare_answers(model_answer_dir, dataset_local_name, metric):
     bare_prefix = "../ref_llm_answers/bare"
     finetuned_prefix = "../ref_llm_answers/finetuned"
 
-    vocab_set = set()
-
     bare_model_list = os.listdir(bare_prefix)
-    for name in bare_model_list:
-        bare_reference_answer_path = "{}/{}/{}".format(bare_prefix, name, dataset_local_name)
-        answer_list = os.listdir(bare_reference_answer_path)
-        for answer_index in range(len(answer_list)):
-            with open("{}/answer_{}.pkl".format(bare_reference_answer_path, answer_index), "rb") as answer_file:
-                answer = pickle.load(answer_file)
-                token_list = split_sentence(answer)
-                for token in token_list:
-                    vocab_set.add(token)
-            answer_file.close()
-    
     finetuned_model_list = os.listdir(finetuned_prefix)
-    for name in finetuned_model_list:
-        finetuned_reference_answer_path = "{}/{}/{}".format(finetuned_prefix, name, dataset_local_name)
-        answer_list = os.listdir(finetuned_reference_answer_path)
-        for answer_index in range(len(answer_list)):
-            with open("{}/answer_{}.pkl".format(finetuned_reference_answer_path, answer_index), "rb") as answer_file:
-                answer = pickle.load(answer_file)
-                token_list = split_sentence(answer)
-                for token in token_list:
-                    vocab_set.add(token)
-            answer_file.close()
-    
     verify_answer_list = os.listdir(model_answer_dir)
-    for answer_index in range(len(verify_answer_list)):
-        # with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
-        #     answer = torch.load(answer_file, map_location="cpu")
-        # with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "wb") as answer_file:
-        #     pickle.dump(answer, answer_file)
-        with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
-            answer = pickle.load(answer_file)
-            token_list = split_sentence(answer)
-            for token in token_list:
-                vocab_set.add(token)
-        answer_file.close()
+    if "answer_scores.pt" in verify_answer_list:
+        verify_answer_list.remove("answer_scores.pt")
+    if "BERT_scores.pt" in verify_answer_list:
+        verify_answer_list.remove("BERT_scores.pt")
     
-    vocab_list = list(vocab_set)
-    vocab_size = len(vocab_list)
     reference_model_num = len(bare_model_list)
     similarity_scores = torch.zeros(2*reference_model_num, len(verify_answer_list))
-    cos_simi = torch.nn.CosineSimilarity(dim=0)
+    if metric == "TF-IDF":
+        tfidf_vectorizer = TfidfVectorizer()
+        for answer_index in tqdm(range(len(verify_answer_list))):
+            answers = []
+            with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
+                answer = pickle.load(answer_file)
+                answers.append(answer)
+            answer_file.close()
 
-    for answer_index in tqdm(range(len(verify_answer_list))):
-        bare_answers_vec = torch.zeros(reference_model_num, vocab_size)
-        finetuned_answers_vec = torch.zeros(reference_model_num, vocab_size)
-        verify_answer_vec = torch.zeros(vocab_size)
-        for name_index in range(len(bare_model_list)):
-            bare_answer_path = "{}/{}/{}/answer_{}.pkl".format(bare_prefix, bare_model_list[name_index], dataset_local_name, answer_index)
-            with open(bare_answer_path, "rb") as bare_answer_file:
-                bare_answer = pickle.load(bare_answer_file)
-                bare_token_list = split_sentence(bare_answer)
-                for token in bare_token_list:
-                    token_index = vocab_list.index(token)
-                    bare_answers_vec[name_index][token_index] += 1
-            bare_answer_file.close()
+            for name in bare_model_list:
+                with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, name, dataset_local_name, answer_index), "rb") as answer_file:
+                    answer = pickle.load(answer_file)
+                    answers.append(answer)
+                answer_file.close()
+            
+            for name in finetuned_model_list:
+                with open("{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, name, dataset_local_name, answer_index), "rb") as answer_file:
+                    answer = pickle.load(answer_file)
+                    answers.append(answer)
+                answer_file.close()
+            
+            tfidf_matrix = tfidf_vectorizer.fit_transform(answers)
 
-        for name_index in range(len(finetuned_model_list)):
-            finetuned_answer_path = "{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, finetuned_model_list[name_index], dataset_local_name, answer_index)
-            with open(finetuned_answer_path, "rb") as finetuned_answer_file:
-                finetuned_answer = pickle.load(finetuned_answer_file)
-                finetuned_token_list = split_sentence(finetuned_answer)
-                for token in finetuned_token_list:
-                    token_index = vocab_list.index(token)
-                    finetuned_answers_vec[name_index][token_index] += 1
-            finetuned_answer_file.close()
+            # filter_threshold = 0.5
+            # similar_pair_num = 0
+            # for i in range(reference_model_num):
+            #     pair_similarity = cosine_similarity(tfidf_matrix[i+1], tfidf_matrix[i+1+reference_model_num])[0][0].item()
+            #     if pair_similarity >= filter_threshold:
+            #         similar_pair_num += 1
+            # if similar_pair_num >= math.ceil(reference_model_num/2):
+            #     continue
+
+            for i in range(reference_model_num):
+                similarity_scores[i, answer_index] = cosine_similarity(tfidf_matrix[0], tfidf_matrix[i+1])[0][0].item()
+                similarity_scores[i+reference_model_num, answer_index] = cosine_similarity(tfidf_matrix[0], tfidf_matrix[i+1+reference_model_num])[0][0].item()
+        torch.save(similarity_scores, "{}/answer_scores.pt".format(model_answer_dir))
+    elif metric == "BERT":
+        bertscore = evaluate.load("bertscore")
+        test_answer_list = list()
+        bare_answer_list, finetuned_answer_list = list(list() for _ in range(reference_model_num)), list(list() for _ in range(reference_model_num))
+        for answer_index in range(len(verify_answer_list)):
+            with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
+                test_answer = pickle.load(answer_file)
+                test_answer_list.append(test_answer)
+            answer_file.close()
+
+            for i in range(reference_model_num):
+                with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, bare_model_list[i], dataset_local_name, answer_index), "rb") as answer_file:
+                    bare_answer = pickle.load(answer_file)
+                    bare_answer_list[i].append(bare_answer)
+                answer_file.close()
+            
+            for i in range(reference_model_num):
+                with open("{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, finetuned_model_list[i], dataset_local_name, answer_index), "rb") as answer_file:
+                    finetuned_answer = pickle.load(answer_file)
+                    finetuned_answer_list[i].append(finetuned_answer)
+                answer_file.close()
         
-        verify_answer_path = "{}/answer_{}.pkl".format(model_answer_dir, answer_index)
-        with open(verify_answer_path, "rb") as verify_answer_file:
-            verify_answer = pickle.load(verify_answer_file)
-            verify_token_list = split_sentence(verify_answer)
-            for token in verify_token_list:
-                token_index = vocab_list.index(token)
-                verify_answer_vec[token_index] += 1
-        verify_answer_file.close()
-
+        
+        # reference_bertscore_results = list()
+        # for i in range(reference_model_num):
+        #     results = bertscore.compute(predictions=bare_answer_list[i], references=finetuned_answer_list[i], model_type="distilbert-base-uncased")
+        #     reference_bertscore_results.append(results)
+        
+        # filter_answer_index = list()
+        # filter_threshold = 0.6
+        # for i in range(len(test_answer_list)):
+        #     temp_list = list()
+        #     for j in range(reference_model_num):
+        #         temp_list.append(reference_bertscore_results[j]['f1'][i])
+            
+        #     above_threshold = [value for value in temp_list if value > filter_threshold]
+        #     if len(above_threshold) >= math.ceil(reference_model_num/2):
+        #         filter_answer_index.append(i)
+        
+        bare_bert_results, finetuned_bert_results = list(), list()
         for i in range(reference_model_num):
-            score = cos_simi(verify_answer_vec, bare_answers_vec[i, :])
-            similarity_scores[i, answer_index] = score
+            results = bertscore.compute(predictions=test_answer_list, references=bare_answer_list[i], model_type="distilbert-base-uncased")
+            bare_bert_results.append(results)
+            results = bertscore.compute(predictions=test_answer_list, references=finetuned_answer_list[i], model_type="distilbert-base-uncased")
+            finetuned_bert_results.append(results)
         
+        for i in range(len(test_answer_list)):
+            # if i in filter_answer_index:
+            #     continue
+
+            for j in range(reference_model_num):
+                similarity_scores[j, i] = bare_bert_results[j]['f1'][i]
+                similarity_scores[j+reference_model_num, i] = finetuned_bert_results[j]['f1'][i]
+
+        torch.save(similarity_scores, "{}/BERT_scores.pt".format(model_answer_dir))
+
+
+def threshold_answers(model_answer_dir, metric):
+    if metric == "TF-IDF":
+        similarity_scores = torch.load("{}/answer_scores.pt".format(model_answer_dir))
+    elif metric == "BERT":
+        similarity_scores = torch.load("{}/BERT_scores.pt".format(model_answer_dir))
+    
+    model_num, question_num = similarity_scores.shape
+    reference_model_num = int(model_num/2)
+
+    filter_threshold = 0.8
+    nonmem_answer_num, mem_answer_num = 0, 0
+    for j in range(question_num):
+        # if torch.sum(similarity_scores[:, j]).item() == 0:
+        #     continue
+        nonmem_ref_above, mem_ref_above = 0, 0
         for i in range(reference_model_num):
-            score = cos_simi(verify_answer_vec, finetuned_answers_vec[i, :])
-            similarity_scores[i+reference_model_num, answer_index] = score
-        
-    torch.save(similarity_scores, "{}/answer_scores.pt".format(model_answer_dir))
+            if similarity_scores[i, j] >= filter_threshold:
+                nonmem_ref_above += 1
+            if similarity_scores[i+reference_model_num, j] >= filter_threshold:
+                mem_ref_above += 1
+            
+        if nonmem_ref_above == mem_ref_above:
+            continue
+
+        nonmem_simi_list = similarity_scores[:reference_model_num, j].tolist()
+        mem_simi_list = similarity_scores[reference_model_num:, j].tolist()
+
+        _, p_value = stats.ttest_ind(mem_simi_list, nonmem_simi_list, alternative='greater')
+        if p_value < 0.05:
+            mem_answer_num += 1
+        else:
+            nonmem_answer_num += 1
+
+    print(mem_answer_num, nonmem_answer_num)
+
+
+def insight_eval(bare_answer_dir, finetuned_answer_dir):
+    dataset = utils.get_dataset("databricks/databricks-dolly-15k", "../dataset/dd_15k.pkl")
+    dataset = dataset["train"]
+    
+    category_list = list()
+    for data in dataset:
+        category_list.append(data["category"])
+    category_set = set(category_list)
+
+    category_index = dict()
+    category_bare_simi = dict()
+    category_finetuned_simi = dict()
+    for category in category_set:
+        category_index.update({category:list()})
+        category_bare_simi.update({category:list()})
+        category_finetuned_simi.update({category:list()})
+    
+    for i in range(len(dataset)):
+        category_index[dataset[i]["category"]].append(i)
+    
+    for category_name in tqdm(category_set):
+        tfidf_vectorizer = TfidfVectorizer()
+        for answer_index in tqdm(category_index[category_name]):
+            answers = []
+            original_answer = dataset[answer_index]["response"]
+            if len(original_answer) < 5:
+                continue
+            answers.append(original_answer)
+
+            with open("{}/answer_{}.pkl".format(bare_answer_dir, answer_index), "rb") as answer_file:
+                bare_answer = pickle.load(answer_file)
+                answers.append(bare_answer)
+            answer_file.close()
+
+            with open("{}/answer_{}.pkl".format(finetuned_answer_dir, answer_index), "rb") as answer_file:
+                finetuned_answer = pickle.load(answer_file)
+                answers.append(finetuned_answer)
+            answer_file.close()
+            
+            tfidf_matrix = tfidf_vectorizer.fit_transform(answers)
+            bare_score = round(cosine_similarity(tfidf_matrix[0], tfidf_matrix[1])[0][0].item(), 2)
+            finetuned_score = round(cosine_similarity(tfidf_matrix[0], tfidf_matrix[2])[0][0].item(), 2)
+            
+            category_bare_simi[category_name].append(bare_score)
+            category_finetuned_simi[category_name].append(finetuned_score)
+    
+    threshold_list = [0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
+    for category_name in tqdm(category_set):
+        bare_sum_list, finetuned_sum_list = list(), list()
+        for threshold in threshold_list:
+            bare_sum_list.append(sum(simi_value > threshold for simi_value in category_bare_simi[category_name]))
+            finetuned_sum_list.append(sum(simi_value > threshold for simi_value in category_finetuned_simi[category_name]))
+        print("bare:", category_name, ":", bare_sum_list)
+        print("finetuned:", category_name, ":", finetuned_sum_list)
 
 
 if __name__ == '__main__':
-    # thres_list = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
-    # for thres in thres_list:
-    #     print(thresholding_tensor("../ref_llm_answers/bare/glm/dd_15k/answer_scores.pt", thres))
+    # mem_list = ["zephyralpha", "zephyrbeta", "stablelm3B", "danube1.8B", "starchat15B", "juanako7B", "yi6B", "cybertron7B", "tulu7B", "tulu13B"]
+    # for name in mem_list:
+    #     compare_answers("../paraphrase_answers/ultrafeedback/{}".format(name), "ultrafeedback", "BERT")
+    
+    # nonmem_list = ["dolly3B", "dolly7B", "dolly12B", "flangpt4", "flanxl", "flanxxl", "bloom3B", "redpajama3B", "platypus7B", "meditron7B"]
+    # for name in nonmem_list:
+    #     compare_answers("../paraphrase_answers/ultrafeedback/{}".format(name), "ultrafeedback", "BERT")
+    
 
-    compare_answers("../answers/dd_15k/bloom3B", "dd_15k")
+    mem_list = ["zephyralpha", "zephyrbeta", "stablelm3B", "danube1.8B", "starchat15B", "juanako7B", "yi6B", "cybertron7B", "tulu7B", "tulu13B"]
+    for name in mem_list:
+       threshold_answers("../answers/ultrafeedback/{}".format(name), "BERT")
+    
+    print("----------------------------------")
+    nonmem_list = ["dolly3B", "dolly7B", "dolly12B", "flangpt4", "flanxl", "flanxxl", "bloom3B", "redpajama3B", "platypus7B", "meditron7B"]
+    for name in nonmem_list:
+        threshold_answers("../answers/ultrafeedback/{}".format(name), "BERT")
+
+    # compare_answers("../com_llm_answers/chatgpt3.5/ultrafeedback", "ultrafeedback", "TF-IDF")
+    # compare_answers("../com_llm_answers/chatgpt3.5_ft/dd_15k", "dd_15k", "TF-IDF")
+    # threshold_answers("../com_llm_answers/chatgpt3.5/ultrafeedback")
+    # threshold_answers("../com_llm_answers/chatgpt3.5_ft/dd_15k")
+
+    # mem_list = ["zephyralpha", "zephyrbeta", "stablelm3B", "danube1.8B", "starchat15B", "juanako7B", "yi6B", "cybertron7B", "tulu7B", "tulu13B"]
+    # print("Member Models:\n")
+    # for name in tqdm(mem_list):
+    #     BERT_simi = measure_robustness("../answers/ultrafeedback/{}".format(name), "../paraphrase_answers/ultrafeedback/{}".format(name), "BLEU")
+    #     print(BERT_simi)
+    # print("---------------------")
+
+    # for name in tqdm(mem_list):
+    #     BERT_simi = measure_robustness("../answers/ultrafeedback/{}".format(name), "../paraphrase_answers/ultrafeedback/{}".format(name), "BERTscore")
+    #     print(BERT_simi)
+    # print("---------------------")
+
+    # nonmem_list = ["dolly3B", "dolly7B", "dolly12B", "flangpt4", "flanxl", "flanxxl", "bloom3B", "redpajama3B", "platypus7B", "meditron7B"]
+    # print("Non-member Models:\n")
+    # for name in tqdm(nonmem_list):
+    #     BERT_simi = measure_robustness("../answers/ultrafeedback/{}".format(name), "../paraphrase_answers/ultrafeedback/{}".format(name), "BLEU")
+    #     print(BERT_simi)
+    # print("---------------------")
+
+    # for name in tqdm(nonmem_list):
+    #     BERT_simi = measure_robustness("../answers/ultrafeedback/{}".format(name), "../paraphrase_answers/ultrafeedback/{}".format(name), "BERTscore")
+    #     print(BERT_simi)
+    # print("---------------------")
+
+    # insight_eval("../insight_answers/chatgpt3.5/dd_15k", "../insight_answers/chatgpt3.5_ft/dd_15k")

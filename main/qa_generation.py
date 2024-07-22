@@ -42,7 +42,7 @@ def generate_answers(args):
     else: # for dd_15k dataset
         select_category_list = ["closed_qa", "open_qa", "general_qa"]
         dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
-
+    
     data_group_num = math.ceil(len(dataset) / args["inference_batch_size"])
 
     ### initialize model or pipeline

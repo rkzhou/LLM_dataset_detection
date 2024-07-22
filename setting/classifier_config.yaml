@@ -9,7 +9,7 @@ mistralai/Mistral-7B-Instruct-v0.2:
   output_dir: "../model/open_qa/"
   per_device_train_batch_size: 32
   optim: "paged_adamw_32bit"
-  num_train_epochs: 8.0
+  num_train_epochs: 5.0
   save_strategy: "epoch"
   learning_rate: 0.00002
   lr_scheduler_type: "constant"

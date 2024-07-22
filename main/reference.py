@@ -45,6 +45,8 @@ class reference_model_base():
         self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
         if self.model_name == "Qwen/Qwen2-7B":
             self.tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
+        elif self.model_name == "THUDM/glm-4-9b":
+            self.tokenizer.add_special_tokens({'bos_token' : '<sop>'})
         self.model.config.use_cache = False
         self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
         self.finetune_model.config.use_cache = True
@@ -89,7 +91,7 @@ class reference_model_base():
     def preprocess_data(self, args):
         with open(args["general_dataset_save_path"], "rb") as general_dataset_file:
             dataset = pickle.load(general_dataset_file)
-
+        
         dataset_save_root = args[self.model_name]["preprocess_dataset_save_path"].split("/")
         dataset_save_root = dataset_save_root[:-1]
         dataset_save_root = os.path.join(*dataset_save_root)
@@ -148,8 +150,8 @@ class reference_model_base():
     
 
     def predict(self, args):
-        final_model_path = args[self.model_name]["output_dir"] + "checkpoint-5631"
-        self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
+        # final_model_path = args[self.model_name]["output_dir"] + "checkpoint-5631"
+        # self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
 
         if args["saved_dataset"] != "None":
             with open(args["saved_dataset"], "rb") as dataset_file:
@@ -176,159 +178,62 @@ class reference_model_base():
         if not os.path.exists(selected_dataset_save_root):
             os.makedirs(selected_dataset_save_root)
         
-        if args["dataset_name"] == "databricks/databricks-dolly-15k":
-            dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
-            
-            with open(args["selected_dataset_save_path"], "wb") as file:
-                pickle.dump(dataset, file)
-
-        elif args["dataset_name"] == "tatsu-lab/alpaca":
-            dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
-            
-            with open(args["selected_dataset_save_path"], "wb") as file:
-                pickle.dump(dataset, file)
-        
-        elif args["dataset_name"] == "Open-Orca/SlimOrca":
-            pass
-        elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
-            pass
-        else:
-            raise ValueError("Invalid dataset")
+        dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
+        with open(args["selected_dataset_save_path"], "wb") as file:
+            pickle.dump(dataset, file)
 
         data_group_num = math.ceil(len(dataset) / args[self.model_name]["prediction_batch_size"])
 
-        if not os.path.exists(args[self.model_name]["finetuned_prediction_save_dir"]):
-            os.makedirs(args[self.model_name]["finetuned_prediction_save_dir"])
+        if not os.path.exists(args[self.model_name]["bare_prediction_save_dir"]):
+            os.makedirs(args[self.model_name]["bare_prediction_save_dir"])
         
-        model_scores = list()
-        cos_simi = torch.nn.CosineSimilarity(dim=0)
         saved_answer_num = 0
         ### loop every batch of questions
         for group_index in tqdm(range(data_group_num)):
-            current_group_complete = False
             current_group_saved_answer_num = 0
             ### check if answers have been already saved
             for i in range(args[self.model_name]["prediction_batch_size"]):
                 data_index = group_index * args[self.model_name]["prediction_batch_size"] + i
-                if os.path.exists("{}/answer_{}.pkl".format(args[self.model_name]["finetuned_prediction_save_dir"], data_index)):
+                if os.path.exists("{}/answer_{}.pkl".format(args[self.model_name]["bare_prediction_save_dir"], data_index)):
                     saved_answer_num += 1
                     current_group_saved_answer_num += 1
-                    with open("{}/answer_{}.pkl".format(args[self.model_name]["finetuned_prediction_save_dir"], data_index), 'rb') as file:
-                        saved_model_answer = pickle.load(file)
-                    
-                    benchmark_answer = dataset[data_index]["response"]
-                    benchmark_split_tokens = split_sentence(benchmark_answer)
-                    model_split_tokens = split_sentence(saved_model_answer)
-
-                    vocab = list(set(benchmark_split_tokens + model_split_tokens))
-                    vocab_size = len(vocab)
-                    benchmark_tfidf = torch.zeros(vocab_size)
-                    model_tfidf = torch.zeros(vocab_size)
-
-                    for token in benchmark_split_tokens:
-                        position = vocab.index(token)
-                        benchmark_tfidf[position] += 1
-                    for token in model_split_tokens:
-                        position = vocab.index(token)
-                        model_tfidf[position] += 1
-
-                    similarity_score = cos_simi(benchmark_tfidf, model_tfidf)
-                    similarity_score = torch.clamp(similarity_score, min=0.0, max=1.0).item()
-
-                    model_scores.append(similarity_score)
-                if data_index >= len(dataset):
-                    print("Reach the end of dataset")
-                    model_scores = numpy.array(model_scores)
-                    scores_tensor = torch.flatten(torch.Tensor(model_scores))
-                    torch.save(scores_tensor, "{}/answer_scores.pt".format(args[self.model_name]["finetuned_prediction_save_dir"]))
-                    exit()
-            if current_group_saved_answer_num == args[self.model_name]["prediction_batch_size"]:
-                current_group_complete = True
+                
+            if saved_answer_num == len(dataset):
+                print("Generated all answers of prompts")
+                exit()
             
-            if current_group_complete == True:
+            if current_group_saved_answer_num == args[self.model_name]["prediction_batch_size"]:
                 continue
+            else:
+                begin_index = group_index * args[self.model_name]["prediction_batch_size"] + current_group_saved_answer_num
+                end_index = min(len(dataset), (group_index + 1) * args[self.model_name]["prediction_batch_size"])
 
             raw_prompt_list = list()
-            benchmark_answer_list = list()
-            model_answer_list = list()
             
             ### preprocess prompt
-            for i in range(args[self.model_name]["prediction_batch_size"]):
-                data_index = args[self.model_name]["prediction_batch_size"] * group_index + i
-                if data_index < len(dataset):
-                    data = dataset[data_index]
-                    if data["system"] == "":
-                        prompt = "### Question: {} ### Answer: ".format(data["instruction"])
-                    else:
-                        prompt = "### Question: {} {} ### Answer: ".format(data["system"], data["instruction"])
-                    raw_prompt_list.append(prompt)
-                    benchmark_answer_list.append(data["response"])
+            data_index_list = [i for i in range(begin_index, end_index)]
+            for data_index in data_index_list:
+                data = dataset[data_index]
+                if data["system"] == "":
+                    prompt = "### Question: {} ### Answer: ".format(data["instruction"])
+                else:
+                    prompt = "### Question: {} {} ### Answer: ".format(data["system"], data["instruction"])
+                raw_prompt_list.append(prompt)
+
+
+            encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, return_tensors='pt').to("cuda")
+            generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=256)
+            responses = self.finetune_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
             
-            ### split benchmark answers into tokens
-            benchmark_split_token_list, model_split_token_list = list(), list()
-            for benchmark_answer in benchmark_answer_list:
-                split_tokens = split_sentence(benchmark_answer)
-                benchmark_split_token_list.append(split_tokens)
-
-            ### infering reference models to get answers with multiple times
-            for times in range(args[self.model_name]["inference_times"]):
-                encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, return_tensors='pt').to("cuda")
-                generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=512, do_sample=True, top_k=50, top_p=0.95)
-                responses = self.finetune_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-                current_time_answers = list()
-                for response in responses:
-                    answer = response.split("### Answer: ")[-1]
-                    current_time_answers.append(answer)
-                
-                model_answer_list.append(current_time_answers)
+            answers = list()
+            for response in responses:
+                answer = response.split("### Answer: ")[-1]
+                answers.append(answer)
             
-            ### split model answers into tokens (multiple times)
-            for model_answers in model_answer_list:
-                answers_split_tokens = list()
-                for answer in model_answers:
-                    split_tokens = split_sentence(answer)
-                    answers_split_tokens.append(split_tokens)
-                model_split_token_list.append(answers_split_tokens)
+            for i in range(len(data_index_list)):
+                with open("{}/answer_{}.pkl".format(args[self.model_name]["bare_prediction_save_dir"], data_index_list[i]), 'wb') as file:
+                    pickle.dump(answers[i], file)
             
-            ### calculate the similarity score and save the best answer
-            for answer_index in range(len(benchmark_answer_list)):
-                best_score = 0
-                best_index = -1
-
-                total_tokens = list()
-                total_tokens += benchmark_split_token_list[answer_index]
-                for times in range(args[self.model_name]["inference_times"]):
-                    total_tokens += model_split_token_list[times][answer_index]
-                vocab = list(set(total_tokens))
-                vocab_size = len(vocab)
-                benchmark_tfidf = torch.zeros(vocab_size)
-                for token in benchmark_split_token_list[answer_index]:
-                    position = vocab.index(token)
-                    benchmark_tfidf[position] += 1
-                
-                model_tfidf = torch.zeros([args[self.model_name]["inference_times"], vocab_size])
-                for times in range(args[self.model_name]["inference_times"]):
-                    for token in model_split_token_list[times][answer_index]:
-                        position = vocab.index(token)
-                        model_tfidf[times][position] += 1
-
-                for times in range(args[self.model_name]["inference_times"]):
-                    similarity_score = cos_simi(benchmark_tfidf, model_tfidf[times, :])
-                    similarity_score = torch.clamp(similarity_score, min=0.0, max=1.0).item()
-                    if similarity_score > best_score:
-                        best_score = similarity_score
-                        best_index = times
-                
-                data_index = args[self.model_name]["prediction_batch_size"] * group_index + answer_index
-                with open("{}/answer_{}.pkl".format(args[self.model_name]["finetuned_prediction_save_dir"], data_index), 'wb') as file:
-                    pickle.dump(model_answer_list[best_index][answer_index], file)
-                model_scores.append(best_score)
-        
-        model_scores = numpy.array(model_scores)
-        scores_tensor = torch.flatten(torch.Tensor(model_scores))
-
-        torch.save(scores_tensor, "{}/answer_scores.pt".format(args[self.model_name]["finetuned_prediction_save_dir"]))
 
 
 class Mistral(reference_model_base):
@@ -347,7 +252,7 @@ class Qwen(reference_model_base):
     pass
 
 
-class Stablelm(reference_model_base):
+class Glm(reference_model_base):
     pass
 
 
@@ -404,14 +309,14 @@ def fine_tune(args):
         model = Llama3(args)
     elif args["model_name"] == "Qwen/Qwen2-7B":
         model = Qwen(args)
-    elif args["model_name"] == "stabilityai/stablelm-2-1_6b":
-        model = Stablelm(args)
+    elif args["model_name"] == "THUDM/glm-4-9b":
+        model = Glm(args)
     else:
         raise ValueError("Invalid model name")
     
-    model.preprocess_data(args)
-    model.train(args)
-    # model.predict(args)
+    # model.preprocess_data(args)
+    # model.train(args)
+    model.predict(args)
 
 
 if __name__ == '__main__':

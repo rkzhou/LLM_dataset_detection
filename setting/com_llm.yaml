@@ -1,19 +1,22 @@
-dataset_name: "Open-Orca/SlimOrca"
-dataset_path: "../dataset/slimorca.pkl"
-saved_category: "../categorization/slimorca_answers.pkl"
-saved_dataset: "../categorization/slimorca_selected_datasets.pkl"
+dataset_name: "databricks/databricks-dolly-15k"
+dataset_path: "../dataset/dd_15k.pkl"
+saved_category: "None"
+saved_dataset: "None"
 seed_index: 42
 
 chatgpt3.5:
   preprocess_dataset_save_path: "../com_llm_dataset/slimorca.jsonl"
-  answer_root: "../answers/chatgpt3.5/slimorca"
-  batch_size: 1
-  inference_times: 3
-  early_stop_flag: False
-  early_stop_num: 1500
+  answer_directory: "../insight_answers/chatgpt3.5/dd_15k"
+  inference_batch_size: 1
   training_epoch: 3
   training_suffix: "slimorca"
   api_key: "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"
 
-gemini-1.5-flash:
-  api_key: "AIzaSyBrplDrBas1hAe78zMg303lHkzlkkSnEbU"
+gpt-4o:
+  original_answer_root: "../answers"
+  paraphrase_answer_root: "../paraphrase_answers"
+  dataset_name: "ultrafeedback"
+  batch_model_num: 10
+  current_batch: 1
+  paraphrase_batch_file_root: "../paraphrase_files"
+  api_key: "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"
