@@ -14,7 +14,7 @@ class model_base():
 
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=256)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses

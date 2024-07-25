@@ -1,16 +1,16 @@
-dataset_name: "tatsu-lab/alpaca"
-dataset_path: "../dataset/alpaca.pkl"
-saved_category: "../categorization/alpaca_answers.pkl"
-saved_dataset: "../categorization/alpaca_selected_datasets.pkl"
+dataset_name: "databricks/databricks-dolly-15k"
+dataset_path: "../dataset/dd15k.pkl"
 model_name: "mistralai/Mistral-7B-v0.1"
 seed_index: 42
-general_dataset_save_path: "../ref_llm_dataset/general/alpaca.pkl"
-selected_dataset_save_path: "../ref_llm_dataset/selected/alpaca.pkl"
+general_dataset_save_path: "../ref_llm_dataset/general/dd15k.pkl"
+model_version: "bare"
+model_action: "train"
+model_checkpoint: "checkpoint-5631"
 
 
 mistralai/Mistral-7B-v0.1:
-  preprocess_dataset_save_path: "../ref_llm_dataset/mistral/alpaca.jsonl"
-  output_dir: "../ref_models/mistral/alpaca/"
+  preprocess_dataset_save_path: "../ref_llm_dataset/mistral/dd15k.jsonl"
+  output_dir: "../ref_models/mistral/dd15k/"
   r: 64
   lora_alpha: 16
   lora_dropout: 0.05
@@ -23,14 +23,15 @@ mistralai/Mistral-7B-v0.1:
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
-  bare_prediction_save_dir: "../ref_llm_answers/bare/mistral/alpaca"
-  finetuned_prediction_save_dir: "../ref_llm_answers/finetuned/mistral/alpaca"
+  bare_prediction_save_dir: "../ref_llm_answers/bare/mistral/dd15k"
+  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/mistral/dd15k"
   prediction_batch_size: 8
+  bare_split_mark: "[/INST]"
 
 
 google/gemma-7b:
-  preprocess_dataset_save_path: "../ref_llm_dataset/gemma/alpaca.jsonl"
-  output_dir: "../ref_models/gemma/alpaca/"
+  preprocess_dataset_save_path: "../ref_llm_dataset/gemma/dd15k.jsonl"
+  output_dir: "../ref_models/gemma/dd15k/"
   r: 64
   lora_alpha: 16
   lora_dropout: 0.05
@@ -43,14 +44,15 @@ google/gemma-7b:
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
-  bare_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/bare/gemma/alpaca"
-  finetuned_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/finetuned/gemma/alpaca"
+  bare_prediction_save_dir: "../ref_llm_answers/bare/gemma/dd15k"
+  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/gemma/dd15k"
   prediction_batch_size: 8
+  bare_split_mark: "model\n"
 
 
 meta-llama/Meta-Llama-3-8B:
-  preprocess_dataset_save_path: "../ref_llm_dataset/llama/alpaca.jsonl"
-  output_dir: "../ref_models/llama/alpaca/"
+  preprocess_dataset_save_path: "../ref_llm_dataset/llama/dd15k.jsonl"
+  output_dir: "../ref_models/llama/dd15k/"
   r: 64
   lora_alpha: 16
   lora_dropout: 0.05
@@ -63,14 +65,15 @@ meta-llama/Meta-Llama-3-8B:
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
-  bare_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/bare/llama/alpaca"
-  finetuned_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/finetuned/llama/alpaca"
+  bare_prediction_save_dir: "../ref_llm_answers/bare/llama/dd15k"
+  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/llama/dd15k"
   prediction_batch_size: 8
+  bare_split_mark: "assistant\n"
 
 
 Qwen/Qwen2-7B:
-  preprocess_dataset_save_path: "../ref_llm_dataset/qwen/alpaca.jsonl"
-  output_dir: "../ref_models/qwen/alpaca/"
+  preprocess_dataset_save_path: "../ref_llm_dataset/qwen/dd15k.jsonl"
+  output_dir: "../ref_models/qwen/dd15k/"
   r: 64
   lora_alpha: 16
   lora_dropout: 0.05
@@ -83,14 +86,15 @@ Qwen/Qwen2-7B:
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
-  bare_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/bare/qwen/alpaca"
-  finetuned_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/finetuned/qwen/alpaca"
+  bare_prediction_save_dir: "../ref_llm_answers/bare/qwen/dd15k"
+  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/qwen/dd15k"
   prediction_batch_size: 8
+  bare_split_mark: "assistant\n"
 
 
 THUDM/glm-4-9b:
-  preprocess_dataset_save_path: "../ref_llm_dataset/glm/alpaca.jsonl"
-  output_dir: "../ref_models/glm/alpaca/"
+  preprocess_dataset_save_path: "../ref_llm_dataset/glm/dd15k.jsonl"
+  output_dir: "../ref_models/glm/dd15k/"
   r: 64
   lora_alpha: 16
   lora_dropout: 0.05
@@ -103,6 +107,7 @@ THUDM/glm-4-9b:
   learning_rate: 0.00005
   lr_scheduler_type: "constant"
   target_modules: ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h", "output_layer"]
-  bare_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/bare/glm/alpaca"
-  finetuned_prediction_save_dir: "/scratch/general/vast/u1436024/ref_llm_answers/finetuned/glm/alpaca"
-  prediction_batch_size: 1
+  bare_prediction_save_dir: "../ref_llm_answers/bare/glm/dd15k"
+  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/glm/dd15k"
+  prediction_batch_size: 8
+  bare_split_mark: "question"

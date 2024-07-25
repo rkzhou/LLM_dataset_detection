@@ -48,9 +48,25 @@ class reference_model_base():
         elif self.model_name == "THUDM/glm-4-9b":
             self.tokenizer.add_special_tokens({'bos_token' : '<sop>'})
         self.model.config.use_cache = False
+
         self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+        if self.model_name == "Qwen/Qwen2-7B":
+            self.finetune_tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
+        elif self.model_name == "THUDM/glm-4-9b":
+            self.finetune_tokenizer.add_special_tokens({'bos_token' : '<sop>'})
         self.finetune_model.config.use_cache = True
         self.finetune_tokenizer.add_bos_token = True
+
+        if self.model_name == "mistralai/Mistral-7B-v0.1":
+            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("mistralai/Mistral-7B-Instruct-v0.1")
+        elif self.model_name == "google/gemma-7b":
+            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("google/gemma-7b-it")
+        elif self.model_name == "meta-llama/Meta-Llama-3-8B":
+            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("meta-llama/Meta-Llama-3-8B-Instruct")
+        elif self.model_name == "Qwen/Qwen2-7B":
+            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("Qwen/Qwen2-7B-Instruct")
+        elif self.model_name == "THUDM/glm-4-9b":
+            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("THUDM/glm-4-9b-chat")
 
 
     # this function is used to output the right formate for each row in the dataset
@@ -150,42 +166,23 @@ class reference_model_base():
     
 
     def predict(self, args):
-        # final_model_path = args[self.model_name]["output_dir"] + "checkpoint-5631"
-        # self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
-
-        if args["saved_dataset"] != "None":
-            with open(args["saved_dataset"], "rb") as dataset_file:
-                dataset = pickle.load(dataset_file)
+        if args["model_version"] == "finetune":
+            final_model_path = args[self.model_name]["output_dir"] + args["model_checkpoint"]
+            self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
+            current_save_dir = args[self.model_name]["finetune_prediction_save_dir"]
         else:
-            dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-
-        if args["saved_category"] != "None":
-            with open(args["saved_category"], "rb") as category_file:
-                data_category = pickle.load(category_file)
+            current_save_dir = args[self.model_name]["bare_prediction_save_dir"]
         
-            data_selection = list()
-            for i in range(len(data_category)):
-                if data_category[i] == "qa":
-                    data_selection.append(i)
-            dataset = dataset.select(data_selection)
-        else: # for dd_15k dataset
-            select_category_list = ["closed_qa", "open_qa", "general_qa"]
-            dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
-        
-        selected_dataset_save_root = args["selected_dataset_save_path"].split("/")
-        selected_dataset_save_root = selected_dataset_save_root[:-1]
-        selected_dataset_save_root = os.path.join(*selected_dataset_save_root)
-        if not os.path.exists(selected_dataset_save_root):
-            os.makedirs(selected_dataset_save_root)
-        
+        dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
         dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
-        with open(args["selected_dataset_save_path"], "wb") as file:
-            pickle.dump(dataset, file)
-
+        if args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+            dataset = dataset["train_sft"]
+        else:
+            dataset = dataset["train"]
         data_group_num = math.ceil(len(dataset) / args[self.model_name]["prediction_batch_size"])
 
-        if not os.path.exists(args[self.model_name]["bare_prediction_save_dir"]):
-            os.makedirs(args[self.model_name]["bare_prediction_save_dir"])
+        if not os.path.exists(current_save_dir):
+            os.makedirs(current_save_dir)
         
         saved_answer_num = 0
         ### loop every batch of questions
@@ -194,7 +191,7 @@ class reference_model_base():
             ### check if answers have been already saved
             for i in range(args[self.model_name]["prediction_batch_size"]):
                 data_index = group_index * args[self.model_name]["prediction_batch_size"] + i
-                if os.path.exists("{}/answer_{}.pkl".format(args[self.model_name]["bare_prediction_save_dir"], data_index)):
+                if os.path.exists("{}/answer_{}.pkl".format(current_save_dir, data_index)):
                     saved_answer_num += 1
                     current_group_saved_answer_num += 1
                 
@@ -214,24 +211,47 @@ class reference_model_base():
             data_index_list = [i for i in range(begin_index, end_index)]
             for data_index in data_index_list:
                 data = dataset[data_index]
-                if data["system"] == "":
-                    prompt = "### Question: {} ### Answer: ".format(data["instruction"])
+                if args["model_version"] == "bare":
+                    if data["system"] == "":
+                        prompt = [
+                            {"role": "user", "content": data["instruction"]},
+                        ]
+                    else:
+                        prompt = [
+                            {"role": "system", "content": data["system"]},
+                            {"role": "user", "content": data["instruction"]},
+                        ]
                 else:
-                    prompt = "### Question: {} {} ### Answer: ".format(data["system"], data["instruction"])
+                    if data["system"] == "":
+                        prompt = "### Question: {} ### Answer: ".format(data["instruction"])
+                    else:
+                        prompt = "### Question: {} {} ### Answer: ".format(data["system"], data["instruction"])
                 raw_prompt_list.append(prompt)
-
-
-            encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, return_tensors='pt').to("cuda")
-            generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=256)
-            responses = self.finetune_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
             
             answers = list()
-            for response in responses:
-                answer = response.split("### Answer: ")[-1]
-                answers.append(answer)
-            
+            if args["model_version"] == "bare":
+                prompt_list = self.instruct_tokenizer.apply_chat_template(raw_prompt_list, add_generation_prompt=True, tokenize=False)
+                encoded_inputs = self.instruct_tokenizer(prompt_list, padding=True, return_tensors='pt')
+                encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
+                generated_ids = self.instruct_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+                responses = self.instruct_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+                
+                if args[self.model_name]["bare_split_mark"] != None:
+                    if args[self.model_name]["bare_split_mark"] == "question":
+                        answers = self.pull_answer(responses, args[self.model_name]["bare_split_mark"], raw_prompt_list)
+                    else:
+                        answers = self.pull_answer(responses, args[self.model_name]["bare_split_mark"])
+            else:
+                encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, return_tensors='pt').to("cuda")
+                generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+                responses = self.finetune_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+                
+                for response in responses:
+                    answer = response.split("### Answer: ")[-1]
+                    answers.append(answer)
+                
             for i in range(len(data_index_list)):
-                with open("{}/answer_{}.pkl".format(args[self.model_name]["bare_prediction_save_dir"], data_index_list[i]), 'wb') as file:
+                with open("{}/answer_{}.pkl".format(current_save_dir, data_index_list[i]), 'wb') as file:
                     pickle.dump(answers[i], file)
             
 
@@ -277,7 +297,7 @@ def format_dataset(data, dataset_name):
     return item
 
 
-def fine_tune(args):
+def model_execute(args):
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
     
     dataset_save_root = args["general_dataset_save_path"].split("/")
@@ -314,12 +334,16 @@ def fine_tune(args):
     else:
         raise ValueError("Invalid model name")
     
-    # model.preprocess_data(args)
-    # model.train(args)
-    model.predict(args)
+    if args["model_version"] == "bare" and args["model_action"] == "train":
+        model.preprocess_data(args)
+        model.train(args)
+    elif args["model_version"] == "bare" and args["model_action"] == "predict":
+        model.predict(args)
+    elif args["model_version"] == "finetune" and args["model_action"] == "predict":
+        model.predict(args)
 
 
 if __name__ == '__main__':
     with open(os.path.join("../setting", "ref_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
-    fine_tune(global_cfg)
+    model_execute(global_cfg)

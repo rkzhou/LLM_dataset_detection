@@ -24,13 +24,13 @@ def fetch_dataset(args, name, hf_path):
 
 
 def generate_answers(args):
-    if args["saved_dataset"] != "None":
+    if args["saved_dataset"] != None:
         with open(args["saved_dataset"], "rb") as file:
             dataset = pickle.load(file)
     else:
         dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
     
-    if args["saved_category"] != "None":
+    if args["saved_category"] != None:
         with open(args["saved_category"], "rb") as file:
             data_category = pickle.load(file)
     
@@ -39,7 +39,7 @@ def generate_answers(args):
             if data_category[i] == "qa":
                 data_selection.append(i)
         dataset = dataset.select(data_selection)
-    else: # for dd_15k dataset
+    else: # for databricks dataset
         select_category_list = ["closed_qa", "open_qa", "general_qa"]
         dataset = dataset.filter(lambda x: x['category'] in select_category_list)["train"]
     
@@ -48,7 +48,7 @@ def generate_answers(args):
     ### initialize model or pipeline
     if args["model_type"] == "pipeline":
         pipeline_tokenizer = AutoTokenizer.from_pretrained(args["model_name"], padding_side="left")
-        if args["pipeline_prefix"] == "None":
+        if args["pipeline_prefix"] == None:
             pipe = pipeline(model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["inference_batch_size"], tokenizer=pipeline_tokenizer)
         else:
             pipe = pipeline(args["pipeline_prefix"], model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["inference_batch_size"], tokenizer=pipeline_tokenizer)
@@ -73,7 +73,11 @@ def generate_answers(args):
         ### check if answers have been already saved
         for i in range(args["inference_batch_size"]):
             data_index = group_index * args["inference_batch_size"] + i
-            if os.path.exists("{}/answer_{}.pkl".format(args["answer_directory"], data_index)):
+            answer_exist_times = 0
+            for j in range(args["inference_times"]):
+                if os.path.exists("{}/answer_{}_{}.pkl".format(args["answer_directory"], data_index, j)):
+                    answer_exist_times += 1
+            if answer_exist_times == args["inference_times"]:
                 saved_answer_num += 1
                 current_group_saved_answer_num += 1
             
@@ -108,7 +112,7 @@ def generate_answers(args):
                 format_data.append({"role": "user", "content": data["prompt"]})
             raw_prompt_list.append(format_data)
 
-        
+        answers = [list() for _ in range(args["inference_times"])]
         if args["model_type"] == "pipeline":
             pipeline_prompt_list = list()
             for prompt in raw_prompt_list:
@@ -123,25 +127,32 @@ def generate_answers(args):
                 else:
                     input_prompt = system_message + " " + user_prompt
                 pipeline_prompt_list.append(input_prompt)
-            responses = pipe(pipeline_prompt_list, max_new_tokens=256)
-            answers = list()
-            for i in range(len(responses)):
-                answer = responses[i][0]["generated_text"]
-                answers.append(answer)
+            
+            # inference multiple times
+            for time_index in range(args["inference_times"]):
+                responses = pipe(pipeline_prompt_list, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+                for i in range(len(responses)):
+                    answer = responses[i][0]["generated_text"]
+                    answers[time_index].append(answer)
         elif args["model_type"] == "kernel":
             prompts = llm_model.preprocess_prompt(raw_prompt_list)
-            responses = llm_model.generate_response(prompts)
-            if args["pull_answer_format"] != None:
-                if args["pull_answer_format"] == "question":
-                    answers = llm_model.pull_answer(responses, args["pull_answer_format"], raw_prompt_list)
+
+            # inference multiple times
+            for time_index in range(args["inference_times"]):
+                responses = llm_model.generate_response(prompts)
+                if args["pull_answer_format"] != None:
+                    if args["pull_answer_format"] == "question":
+                        answers[time_index] = llm_model.pull_answer(responses, args["pull_answer_format"], raw_prompt_list)
+                    else:
+                        answers[time_index] = llm_model.pull_answer(responses, args["pull_answer_format"])
                 else:
-                    answers = llm_model.pull_answer(responses, args["pull_answer_format"])
-            else:
-                answers = responses
+                    answers[time_index] = responses
         
+        # save answers
         for i in range(len(data_index_list)):
-            with open("{}/answer_{}.pkl".format(args["answer_directory"], data_index_list[i]), "wb") as file:
-                pickle.dump(answers[i], file)
+            for j in range(args["inference_times"]):
+                with open("{}/answer_{}_{}.pkl".format(args["answer_directory"], data_index_list[i], j), "wb") as file:
+                    pickle.dump(answers[j][i], file)
 
 
 if __name__ == '__main__':

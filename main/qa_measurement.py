@@ -7,6 +7,7 @@ import evaluate
 import utils
 import transformers
 import math
+import yaml
 
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import util
@@ -93,7 +94,7 @@ def thresholding_tensor(tensor_path, threshold, specific_index=None):
     return larger_threshold_num
 
 
-def compare_answers(model_answer_dir, dataset_local_name, metric):
+def compare_answers(model_answer_dir, dataset_local_name, args):
     bare_prefix = "../ref_llm_answers/bare"
     finetuned_prefix = "../ref_llm_answers/finetuned"
 
@@ -106,15 +107,19 @@ def compare_answers(model_answer_dir, dataset_local_name, metric):
         verify_answer_list.remove("BERT_scores.pt")
     
     reference_model_num = len(bare_model_list)
-    similarity_scores = torch.zeros(2*reference_model_num, len(verify_answer_list))
-    if metric == "TF-IDF":
+    verify_answer_num = int(len(verify_answer_list) / args["inference_times"])
+    similarity_scores = torch.zeros(2*reference_model_num, verify_answer_num)
+    if args["metric"] == "TF-IDF":
         tfidf_vectorizer = TfidfVectorizer()
-        for answer_index in tqdm(range(len(verify_answer_list))):
+        for answer_index in tqdm(range(verify_answer_num)):
             answers = []
-            with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
-                answer = pickle.load(answer_file)
-                answers.append(answer)
-            answer_file.close()
+
+            # load answers from reference models and suspicious models
+            for time_index in range(args["inference_times"]):
+                with open("{}/answer_{}_{}.pkl".format(model_answer_dir, answer_index, time_index), "rb") as answer_file:
+                    answer = pickle.load(answer_file)
+                    answers.append(answer)
+                answer_file.close()
 
             for name in bare_model_list:
                 with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, name, dataset_local_name, answer_index), "rb") as answer_file:
@@ -128,30 +133,29 @@ def compare_answers(model_answer_dir, dataset_local_name, metric):
                     answers.append(answer)
                 answer_file.close()
             
+            # obtain TF-IDF vectors of all answers
             tfidf_matrix = tfidf_vectorizer.fit_transform(answers)
-
-            # filter_threshold = 0.5
-            # similar_pair_num = 0
-            # for i in range(reference_model_num):
-            #     pair_similarity = cosine_similarity(tfidf_matrix[i+1], tfidf_matrix[i+1+reference_model_num])[0][0].item()
-            #     if pair_similarity >= filter_threshold:
-            #         similar_pair_num += 1
-            # if similar_pair_num >= math.ceil(reference_model_num/2):
-            #     continue
-
+            # calculate the best similar scores between answers from reference models and suspicious models
             for i in range(reference_model_num):
-                similarity_scores[i, answer_index] = cosine_similarity(tfidf_matrix[0], tfidf_matrix[i+1])[0][0].item()
-                similarity_scores[i+reference_model_num, answer_index] = cosine_similarity(tfidf_matrix[0], tfidf_matrix[i+1+reference_model_num])[0][0].item()
-        torch.save(similarity_scores, "{}/answer_scores.pt".format(model_answer_dir))
-    elif metric == "BERT":
+                best_simi_with_bare, best_simi_with_finetuned = 0, 0
+                for time_index in range(args["inference_times"]):
+                    best_simi_with_bare = max(best_simi_with_bare, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+1])[0][0].item())
+                    best_simi_with_finetuned = max(best_simi_with_finetuned, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+1+reference_model_num])[0][0].item())
+                similarity_scores[i, answer_index] = best_simi_with_bare
+                similarity_scores[i+reference_model_num, answer_index] = best_simi_with_finetuned
+        torch.save(similarity_scores, "{}/TF-IDF_scores.pt".format(model_answer_dir))
+    elif args["metric"] == "BERT":
         bertscore = evaluate.load("bertscore")
-        test_answer_list = list()
+        test_answer_list = list(list() for _ in range(args["inference_times"]))
         bare_answer_list, finetuned_answer_list = list(list() for _ in range(reference_model_num)), list(list() for _ in range(reference_model_num))
         for answer_index in range(len(verify_answer_list)):
-            with open("{}/answer_{}.pkl".format(model_answer_dir, answer_index), "rb") as answer_file:
-                test_answer = pickle.load(answer_file)
-                test_answer_list.append(test_answer)
-            answer_file.close()
+
+            # load answers from reference models and suspicious models
+            for time_index in range(args["inference_times"]):
+                with open("{}/answer_{}_{}.pkl".format(model_answer_dir, answer_index, time_index), "rb") as answer_file:
+                    test_answer = pickle.load(answer_file)
+                    test_answer_list[time_index].append(test_answer)
+                answer_file.close()
 
             for i in range(reference_model_num):
                 with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, bare_model_list[i], dataset_local_name, answer_index), "rb") as answer_file:
@@ -165,60 +169,44 @@ def compare_answers(model_answer_dir, dataset_local_name, metric):
                     finetuned_answer_list[i].append(finetuned_answer)
                 answer_file.close()
         
-        
-        # reference_bertscore_results = list()
-        # for i in range(reference_model_num):
-        #     results = bertscore.compute(predictions=bare_answer_list[i], references=finetuned_answer_list[i], model_type="distilbert-base-uncased")
-        #     reference_bertscore_results.append(results)
-        
-        # filter_answer_index = list()
-        # filter_threshold = 0.6
-        # for i in range(len(test_answer_list)):
-        #     temp_list = list()
-        #     for j in range(reference_model_num):
-        #         temp_list.append(reference_bertscore_results[j]['f1'][i])
-            
-        #     above_threshold = [value for value in temp_list if value > filter_threshold]
-        #     if len(above_threshold) >= math.ceil(reference_model_num/2):
-        #         filter_answer_index.append(i)
-        
-        bare_bert_results, finetuned_bert_results = list(), list()
+        # calculate BERT scores
+        bare_bert_results, finetuned_bert_results = list(list() for _ in range(args["inference_times"])), list(list() for _ in range(args["inference_times"]))
         for i in range(reference_model_num):
-            results = bertscore.compute(predictions=test_answer_list, references=bare_answer_list[i], model_type="distilbert-base-uncased")
-            bare_bert_results.append(results)
-            results = bertscore.compute(predictions=test_answer_list, references=finetuned_answer_list[i], model_type="distilbert-base-uncased")
-            finetuned_bert_results.append(results)
+            for j in range(args["inference_times"]):
+                results = bertscore.compute(predictions=test_answer_list[j], references=bare_answer_list[i], model_type="distilbert-base-uncased")
+                bare_bert_results[j].append(results)
+                results = bertscore.compute(predictions=test_answer_list[j], references=finetuned_answer_list[i], model_type="distilbert-base-uncased")
+                finetuned_bert_results[j].append(results)
         
-        for i in range(len(test_answer_list)):
-            # if i in filter_answer_index:
-            #     continue
-
+        # save the best scores
+        for i in range(len(test_answer_list[0])):
             for j in range(reference_model_num):
-                similarity_scores[j, i] = bare_bert_results[j]['f1'][i]
-                similarity_scores[j+reference_model_num, i] = finetuned_bert_results[j]['f1'][i]
+                best_simi_with_bare, best_simi_with_finetuned = 0, 0
+                for time_index in range(args["inference_times"]):
+                    best_simi_with_bare = max(best_simi_with_bare, bare_bert_results[time_index][j]['f1'][i])
+                    best_simi_with_finetuned = max(best_simi_with_finetuned, finetuned_bert_results[time_index][j]['f1'][i])
+                similarity_scores[j, i] = best_simi_with_bare
+                similarity_scores[j+reference_model_num, i] = best_simi_with_finetuned
 
         torch.save(similarity_scores, "{}/BERT_scores.pt".format(model_answer_dir))
 
 
-def threshold_answers(model_answer_dir, metric):
-    if metric == "TF-IDF":
-        similarity_scores = torch.load("{}/answer_scores.pt".format(model_answer_dir))
-    elif metric == "BERT":
+def threshold_answers(model_answer_dir, args):
+    if args["metric"] == "TF-IDF":
+        similarity_scores = torch.load("{}/TF-IDF_scores.pt".format(model_answer_dir))
+    elif args["metric"] == "BERT":
         similarity_scores = torch.load("{}/BERT_scores.pt".format(model_answer_dir))
     
     model_num, question_num = similarity_scores.shape
     reference_model_num = int(model_num/2)
 
-    filter_threshold = 0.8
     nonmem_answer_num, mem_answer_num = 0, 0
     for j in range(question_num):
-        # if torch.sum(similarity_scores[:, j]).item() == 0:
-        #     continue
         nonmem_ref_above, mem_ref_above = 0, 0
         for i in range(reference_model_num):
-            if similarity_scores[i, j] >= filter_threshold:
+            if similarity_scores[i, j] >= args["filter_threshold"]:
                 nonmem_ref_above += 1
-            if similarity_scores[i+reference_model_num, j] >= filter_threshold:
+            if similarity_scores[i+reference_model_num, j] >= args["filter_threshold"]:
                 mem_ref_above += 1
             
         if nonmem_ref_above == mem_ref_above:
@@ -293,23 +281,26 @@ def insight_eval(bare_answer_dir, finetuned_answer_dir):
 
 
 if __name__ == '__main__':
-    # mem_list = ["zephyralpha", "zephyrbeta", "stablelm3B", "danube1.8B", "starchat15B", "juanako7B", "yi6B", "cybertron7B", "tulu7B", "tulu13B"]
-    # for name in mem_list:
-    #     compare_answers("../paraphrase_answers/ultrafeedback/{}".format(name), "ultrafeedback", "BERT")
+    with open(os.path.join("../setting", "qa_config.yaml"), 'r') as file:
+        global_cfg = yaml.safe_load(file)
+
+    mem_list = []
+    for name in mem_list:
+        compare_answers("../answers/dd15k/{}".format(name), "dd15k", global_cfg)
     
-    # nonmem_list = ["dolly3B", "dolly7B", "dolly12B", "flangpt4", "flanxl", "flanxxl", "bloom3B", "redpajama3B", "platypus7B", "meditron7B"]
-    # for name in nonmem_list:
-    #     compare_answers("../paraphrase_answers/ultrafeedback/{}".format(name), "ultrafeedback", "BERT")
+    nonmem_list = []
+    for name in nonmem_list:
+        compare_answers("../answers/dd15k/{}".format(name), "dd15k", global_cfg)
     
 
-    mem_list = ["zephyralpha", "zephyrbeta", "stablelm3B", "danube1.8B", "starchat15B", "juanako7B", "yi6B", "cybertron7B", "tulu7B", "tulu13B"]
+    mem_list = []
     for name in mem_list:
-       threshold_answers("../answers/ultrafeedback/{}".format(name), "BERT")
+       threshold_answers("../answers/dd15k/{}".format(name), global_cfg)
     
     print("----------------------------------")
-    nonmem_list = ["dolly3B", "dolly7B", "dolly12B", "flangpt4", "flanxl", "flanxxl", "bloom3B", "redpajama3B", "platypus7B", "meditron7B"]
+    nonmem_list = []
     for name in nonmem_list:
-        threshold_answers("../answers/ultrafeedback/{}".format(name), "BERT")
+        threshold_answers("../answers/dd15k/{}".format(name), global_cfg)
 
     # compare_answers("../com_llm_answers/chatgpt3.5/ultrafeedback", "ultrafeedback", "TF-IDF")
     # compare_answers("../com_llm_answers/chatgpt3.5_ft/dd_15k", "dd_15k", "TF-IDF")
