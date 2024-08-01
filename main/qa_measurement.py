@@ -10,11 +10,9 @@ import math
 import yaml
 
 from transformers import AutoTokenizer, AutoModel
-from sentence_transformers import util
 from tqdm import tqdm
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from scipy import stats
 
 
 def mean_pooling(model_output, attention_mask):
@@ -96,39 +94,36 @@ def thresholding_tensor(tensor_path, threshold, specific_index=None):
 
 def compare_answers(model_answer_dir, dataset_local_name, args):
     bare_prefix = "../ref_llm_answers/bare"
-    finetuned_prefix = "../ref_llm_answers/finetuned"
-
+    finetuned_prefix = "../ref_llm_answers/finetune"
     bare_model_list = os.listdir(bare_prefix)
     finetuned_model_list = os.listdir(finetuned_prefix)
-    verify_answer_list = os.listdir(model_answer_dir)
-    if "answer_scores.pt" in verify_answer_list:
-        verify_answer_list.remove("answer_scores.pt")
-    if "BERT_scores.pt" in verify_answer_list:
-        verify_answer_list.remove("BERT_scores.pt")
-    
     reference_model_num = len(bare_model_list)
-    verify_answer_num = int(len(verify_answer_list) / args["inference_times"])
-    similarity_scores = torch.zeros(2*reference_model_num, verify_answer_num)
+
+    with open(args["selected_dataset_save_path"], "rb") as file:
+        selected_index = pickle.load(file)
+    args["answer_num"] = min(args["answer_num"], len(selected_index))
+    selected_index = selected_index[:args["answer_num"]]
+    similarity_scores = torch.zeros(2*reference_model_num, args["answer_num"])
     if args["metric"] == "TF-IDF":
         tfidf_vectorizer = TfidfVectorizer()
-        for answer_index in tqdm(range(verify_answer_num)):
+        for answer_index in tqdm(range(args["answer_num"])):
             answers = []
 
             # load answers from reference models and suspicious models
             for time_index in range(args["inference_times"]):
-                with open("{}/answer_{}_{}.pkl".format(model_answer_dir, answer_index, time_index), "rb") as answer_file:
+                with open("{}/answer_{}_{}.pkl".format(model_answer_dir, selected_index[answer_index], time_index), "rb") as answer_file:
                     answer = pickle.load(answer_file)
                     answers.append(answer)
                 answer_file.close()
 
             for name in bare_model_list:
-                with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, name, dataset_local_name, answer_index), "rb") as answer_file:
+                with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, name, dataset_local_name, selected_index[answer_index]), "rb") as answer_file:
                     answer = pickle.load(answer_file)
                     answers.append(answer)
                 answer_file.close()
             
             for name in finetuned_model_list:
-                with open("{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, name, dataset_local_name, answer_index), "rb") as answer_file:
+                with open("{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, name, dataset_local_name, selected_index[answer_index]), "rb") as answer_file:
                     answer = pickle.load(answer_file)
                     answers.append(answer)
                 answer_file.close()
@@ -139,8 +134,8 @@ def compare_answers(model_answer_dir, dataset_local_name, args):
             for i in range(reference_model_num):
                 best_simi_with_bare, best_simi_with_finetuned = 0, 0
                 for time_index in range(args["inference_times"]):
-                    best_simi_with_bare = max(best_simi_with_bare, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+1])[0][0].item())
-                    best_simi_with_finetuned = max(best_simi_with_finetuned, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+1+reference_model_num])[0][0].item())
+                    best_simi_with_bare = max(best_simi_with_bare, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+i])[0][0].item())
+                    best_simi_with_finetuned = max(best_simi_with_finetuned, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+i+reference_model_num])[0][0].item())
                 similarity_scores[i, answer_index] = best_simi_with_bare
                 similarity_scores[i+reference_model_num, answer_index] = best_simi_with_finetuned
         torch.save(similarity_scores, "{}/TF-IDF_scores.pt".format(model_answer_dir))
@@ -148,23 +143,23 @@ def compare_answers(model_answer_dir, dataset_local_name, args):
         bertscore = evaluate.load("bertscore")
         test_answer_list = list(list() for _ in range(args["inference_times"]))
         bare_answer_list, finetuned_answer_list = list(list() for _ in range(reference_model_num)), list(list() for _ in range(reference_model_num))
-        for answer_index in range(len(verify_answer_list)):
+        for answer_index in tqdm(range(args["answer_num"])):
 
             # load answers from reference models and suspicious models
             for time_index in range(args["inference_times"]):
-                with open("{}/answer_{}_{}.pkl".format(model_answer_dir, answer_index, time_index), "rb") as answer_file:
+                with open("{}/answer_{}_{}.pkl".format(model_answer_dir, selected_index[answer_index], time_index), "rb") as answer_file:
                     test_answer = pickle.load(answer_file)
                     test_answer_list[time_index].append(test_answer)
                 answer_file.close()
 
             for i in range(reference_model_num):
-                with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, bare_model_list[i], dataset_local_name, answer_index), "rb") as answer_file:
+                with open("{}/{}/{}/answer_{}.pkl".format(bare_prefix, bare_model_list[i], dataset_local_name, selected_index[answer_index]), "rb") as answer_file:
                     bare_answer = pickle.load(answer_file)
                     bare_answer_list[i].append(bare_answer)
                 answer_file.close()
             
             for i in range(reference_model_num):
-                with open("{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, finetuned_model_list[i], dataset_local_name, answer_index), "rb") as answer_file:
+                with open("{}/{}/{}/answer_{}.pkl".format(finetuned_prefix, finetuned_model_list[i], dataset_local_name, selected_index[answer_index]), "rb") as answer_file:
                     finetuned_answer = pickle.load(answer_file)
                     finetuned_answer_list[i].append(finetuned_answer)
                 answer_file.close()
@@ -202,24 +197,17 @@ def threshold_answers(model_answer_dir, args):
 
     nonmem_answer_num, mem_answer_num = 0, 0
     for j in range(question_num):
-        nonmem_ref_above, mem_ref_above = 0, 0
+        nonmem_vote_num, mem_vote_num = 0, 0
         for i in range(reference_model_num):
-            if similarity_scores[i, j] >= args["filter_threshold"]:
-                nonmem_ref_above += 1
-            if similarity_scores[i+reference_model_num, j] >= args["filter_threshold"]:
-                mem_ref_above += 1
-            
-        if nonmem_ref_above == mem_ref_above:
-            continue
-
-        nonmem_simi_list = similarity_scores[:reference_model_num, j].tolist()
-        mem_simi_list = similarity_scores[reference_model_num:, j].tolist()
-
-        _, p_value = stats.ttest_ind(mem_simi_list, nonmem_simi_list, alternative='greater')
-        if p_value < 0.05:
-            mem_answer_num += 1
-        else:
+            if similarity_scores[i, j] > similarity_scores[i+reference_model_num, j]:
+                nonmem_vote_num += 1
+            elif similarity_scores[i, j] < similarity_scores[i+reference_model_num, j]:
+                mem_vote_num += 1
+        
+        if nonmem_vote_num > mem_vote_num:
             nonmem_answer_num += 1
+        elif mem_vote_num > nonmem_vote_num:
+            mem_answer_num += 1
 
     print(mem_answer_num, nonmem_answer_num)
 
@@ -284,21 +272,21 @@ if __name__ == '__main__':
     with open(os.path.join("../setting", "qa_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
 
-    mem_list = []
+    mem_list = ["bloom3B", "dolly3B", "dolly7B", "dolly12B", "tulu7B", "tulu13B", "pythia6.9B", "redpajama3B", "pygmalion7B", "pygmalion13B"]
     for name in mem_list:
         compare_answers("../answers/dd15k/{}".format(name), "dd15k", global_cfg)
     
-    nonmem_list = []
+    nonmem_list = ["mistral7B", "danube1.8B", "bagel8B", "platypus13B", "speechless13B", "tinyllama1.1B", "zephyr7B", "decilm7B", "neural7B", "yi6B"]
     for name in nonmem_list:
         compare_answers("../answers/dd15k/{}".format(name), "dd15k", global_cfg)
     
 
-    mem_list = []
+    mem_list = ["bloom3B", "dolly3B", "dolly7B", "dolly12B", "tulu7B", "tulu13B", "pythia6.9B", "redpajama3B", "pygmalion7B", "pygmalion13B"]
     for name in mem_list:
        threshold_answers("../answers/dd15k/{}".format(name), global_cfg)
     
     print("----------------------------------")
-    nonmem_list = []
+    nonmem_list = ["mistral7B", "danube1.8B", "bagel8B", "platypus13B", "speechless13B", "tinyllama1.1B", "zephyr7B", "decilm7B", "neural7B", "yi6B"]
     for name in nonmem_list:
         threshold_answers("../answers/dd15k/{}".format(name), global_cfg)
 

@@ -12,6 +12,8 @@ import numpy
 import re
 import peft
 from tqdm import tqdm
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def split_sentence(sentence):
@@ -42,31 +44,34 @@ def tokenize_text(data, tokenizer):
 class reference_model_base():
     def __init__(self, args):
         self.model_name = args["model_name"]
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
-        if self.model_name == "Qwen/Qwen2-7B":
-            self.tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
-        elif self.model_name == "THUDM/glm-4-9b":
-            self.tokenizer.add_special_tokens({'bos_token' : '<sop>'})
-        self.model.config.use_cache = False
-
-        self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
-        if self.model_name == "Qwen/Qwen2-7B":
-            self.finetune_tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
-        elif self.model_name == "THUDM/glm-4-9b":
-            self.finetune_tokenizer.add_special_tokens({'bos_token' : '<sop>'})
-        self.finetune_model.config.use_cache = True
-        self.finetune_tokenizer.add_bos_token = True
-
-        if self.model_name == "mistralai/Mistral-7B-v0.1":
-            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("mistralai/Mistral-7B-Instruct-v0.1")
-        elif self.model_name == "google/gemma-7b":
-            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("google/gemma-7b-it")
-        elif self.model_name == "meta-llama/Meta-Llama-3-8B":
-            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("meta-llama/Meta-Llama-3-8B-Instruct")
-        elif self.model_name == "Qwen/Qwen2-7B":
-            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("Qwen/Qwen2-7B-Instruct")
-        elif self.model_name == "THUDM/glm-4-9b":
-            self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("THUDM/glm-4-9b-chat")
+        if args["model_version"] == "bare" and args["model_action"] == "train":
+            self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+            if self.model_name == "Qwen/Qwen2-7B":
+                self.tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
+            elif self.model_name == "THUDM/glm-4-9b":
+                self.tokenizer.add_special_tokens({'bos_token' : '<sop>'})
+            self.model.config.use_cache = False
+        elif args["model_version"] == "finetune" and args["model_action"] == "predict":
+            self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+            final_model_path = args[self.model_name]["output_dir"] + args["model_checkpoint"]
+            self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
+            if self.model_name == "Qwen/Qwen2-7B":
+                self.finetune_tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
+            elif self.model_name == "THUDM/glm-4-9b":
+                self.finetune_tokenizer.add_special_tokens({'bos_token' : '<sop>'})
+            self.finetune_model.config.use_cache = True
+            self.finetune_tokenizer.add_bos_token = True
+        elif args["model_version"] == "bare" and args["model_action"] == "predict":
+            if self.model_name == "mistralai/Mistral-7B-v0.1":
+                self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("mistralai/Mistral-7B-Instruct-v0.1")
+            elif self.model_name == "google/gemma-7b":
+                self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("google/gemma-7b-it")
+            elif self.model_name == "meta-llama/Meta-Llama-3-8B":
+                self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("meta-llama/Meta-Llama-3-8B-Instruct")
+            elif self.model_name == "Qwen/Qwen2-7B":
+                self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("Qwen/Qwen2-7B-Instruct")
+            elif self.model_name == "THUDM/glm-4-9b":
+                self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("THUDM/glm-4-9b-chat")
 
 
     # this function is used to output the right formate for each row in the dataset
@@ -167,18 +172,13 @@ class reference_model_base():
 
     def predict(self, args):
         if args["model_version"] == "finetune":
-            final_model_path = args[self.model_name]["output_dir"] + args["model_checkpoint"]
-            self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
             current_save_dir = args[self.model_name]["finetune_prediction_save_dir"]
         else:
             current_save_dir = args[self.model_name]["bare_prediction_save_dir"]
         
-        dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-        dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
-        if args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
-            dataset = dataset["train_sft"]
-        else:
-            dataset = dataset["train"]
+        with open(args["general_dataset_save_path"], "rb") as file:
+            dataset = pickle.load(file)
+        dataset = dataset.select(range(args["subset_length"]))
         data_group_num = math.ceil(len(dataset) / args[self.model_name]["prediction_batch_size"])
 
         if not os.path.exists(current_save_dir):
@@ -341,6 +341,59 @@ def model_execute(args):
         model.predict(args)
     elif args["model_version"] == "finetune" and args["model_action"] == "predict":
         model.predict(args)
+
+
+def select_data(args):
+    reference_name_list = ["mistralai/Mistral-7B-v0.1", "google/gemma-7b", "meta-llama/Meta-Llama-3-8B", "Qwen/Qwen2-7B", "THUDM/glm-4-9b"]
+    reference_model_num = len(reference_name_list)
+    tfidf_vectorizer = TfidfVectorizer()
+
+    dataset_save_root = args["selected_dataset_save_path"].split("/")
+    dataset_save_root = dataset_save_root[:-1]
+    dataset_save_root = os.path.join(*dataset_save_root)
+    if not os.path.exists(dataset_save_root):
+        os.makedirs(dataset_save_root)
+    
+    with open(args["general_dataset_save_path"], "rb") as file:
+        dataset = pickle.load(file)
+    
+    selected_data_index = list()
+    for i in tqdm(range(args["subset_length"])):
+        corpus = list()
+        for name in reference_name_list:
+            with open("{}/answer_{}.pkl".format(args[name]["bare_prediction_save_dir"], i), "rb") as file:
+                corpus.append(pickle.load(file))
+            
+            with open("{}/answer_{}.pkl".format(args[name]["finetune_prediction_save_dir"], i), "rb") as file:
+                corpus.append(pickle.load(file))
+            
+        corpus.append(dataset[i]["response"])
+        
+        filter_corpus_flag = False
+        for answer in corpus:
+            if len(answer) < args["length_threshold"]:
+                filter_corpus_flag = True
+                break
+        if filter_corpus_flag == True:
+            continue
+        tfidf_matrix = tfidf_vectorizer.fit_transform(corpus)
+        
+        filter_similarity_flag = False
+        for j in range(reference_model_num):
+            nonmemref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j], tfidf_matrix[2*reference_model_num])[0][0].item()
+            memref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j+1], tfidf_matrix[2*reference_model_num])[0][0].item()
+            score_diff = memref_vs_benchmark - nonmemref_vs_benchmark
+            if score_diff < args["similarity_threshold"]:
+                filter_similarity_flag = True
+                break
+        if filter_similarity_flag == True:
+            continue
+
+        selected_data_index.append(i)
+    print(len(selected_data_index))
+    with open(args["selected_dataset_save_path"], "wb") as file:
+        pickle.dump(selected_data_index, file)
+    
 
 
 if __name__ == '__main__':

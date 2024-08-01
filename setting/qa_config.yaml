@@ -1,5 +1,6 @@
-dataset_name: "databricks/databricks-dolly-15k"
-dataset_path: "../dataset/dd15k.pkl"
+general_dataset_save_path: "../ref_llm_dataset/general/dd15k.pkl"
+selected_dataset_save_path: "../ref_llm_dataset/selection/dd15k_index.pkl"
+answer_num: 1000
 model_type: "kernel"
 pipeline_prefix: null
 model_template: 4
@@ -7,9 +8,6 @@ model_name: "ikala/bloom-zh-3b-chat"
 inference_batch_size: 4
 inference_times: 3
 pull_answer_format: "question"
-answer_directory: "../answers/dd_15k/bloom3B"
-saved_category: null
-saved_dataset: null
+answer_directory: "../answers/dd15k/bloom3B"
 seed_index: 42
 metric: "TF-IDF"
-filter_threshold: 0.8

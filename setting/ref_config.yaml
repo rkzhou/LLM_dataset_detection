@@ -4,9 +4,12 @@ model_name: "mistralai/Mistral-7B-v0.1"
 seed_index: 42
 general_dataset_save_path: "../ref_llm_dataset/general/dd15k.pkl"
 model_version: "bare"
-model_action: "train"
-model_checkpoint: "checkpoint-5631"
-
+model_action: "predict"
+model_checkpoint: "checkpoint-final"
+subset_length: 10000
+length_threshold: 30
+similarity_threshold: 0.5
+selected_dataset_save_path: "../ref_llm_dataset/selection/dd15k_index.pkl"
 
 mistralai/Mistral-7B-v0.1:
   preprocess_dataset_save_path: "../ref_llm_dataset/mistral/dd15k.jsonl"
