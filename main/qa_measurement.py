@@ -197,75 +197,15 @@ def threshold_answers(model_answer_dir, args):
 
     nonmem_answer_num, mem_answer_num = 0, 0
     for j in range(question_num):
-        nonmem_vote_num, mem_vote_num = 0, 0
-        for i in range(reference_model_num):
-            if similarity_scores[i, j] > similarity_scores[i+reference_model_num, j]:
-                nonmem_vote_num += 1
-            elif similarity_scores[i, j] < similarity_scores[i+reference_model_num, j]:
-                mem_vote_num += 1
+        nonmem_simi_list = similarity_scores[:reference_model_num, j].tolist()
+        mem_simi_list = similarity_scores[reference_model_num:, j].tolist()
         
-        if nonmem_vote_num > mem_vote_num:
+        if all(x > y for x, y in zip(nonmem_simi_list, mem_simi_list)):
             nonmem_answer_num += 1
-        elif mem_vote_num > nonmem_vote_num:
+        elif all(x > y for x, y in zip(mem_simi_list, nonmem_simi_list)):
             mem_answer_num += 1
 
     print(mem_answer_num, nonmem_answer_num)
-
-
-def insight_eval(bare_answer_dir, finetuned_answer_dir):
-    dataset = utils.get_dataset("databricks/databricks-dolly-15k", "../dataset/dd_15k.pkl")
-    dataset = dataset["train"]
-    
-    category_list = list()
-    for data in dataset:
-        category_list.append(data["category"])
-    category_set = set(category_list)
-
-    category_index = dict()
-    category_bare_simi = dict()
-    category_finetuned_simi = dict()
-    for category in category_set:
-        category_index.update({category:list()})
-        category_bare_simi.update({category:list()})
-        category_finetuned_simi.update({category:list()})
-    
-    for i in range(len(dataset)):
-        category_index[dataset[i]["category"]].append(i)
-    
-    for category_name in tqdm(category_set):
-        tfidf_vectorizer = TfidfVectorizer()
-        for answer_index in tqdm(category_index[category_name]):
-            answers = []
-            original_answer = dataset[answer_index]["response"]
-            if len(original_answer) < 5:
-                continue
-            answers.append(original_answer)
-
-            with open("{}/answer_{}.pkl".format(bare_answer_dir, answer_index), "rb") as answer_file:
-                bare_answer = pickle.load(answer_file)
-                answers.append(bare_answer)
-            answer_file.close()
-
-            with open("{}/answer_{}.pkl".format(finetuned_answer_dir, answer_index), "rb") as answer_file:
-                finetuned_answer = pickle.load(answer_file)
-                answers.append(finetuned_answer)
-            answer_file.close()
-            
-            tfidf_matrix = tfidf_vectorizer.fit_transform(answers)
-            bare_score = round(cosine_similarity(tfidf_matrix[0], tfidf_matrix[1])[0][0].item(), 2)
-            finetuned_score = round(cosine_similarity(tfidf_matrix[0], tfidf_matrix[2])[0][0].item(), 2)
-            
-            category_bare_simi[category_name].append(bare_score)
-            category_finetuned_simi[category_name].append(finetuned_score)
-    
-    threshold_list = [0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
-    for category_name in tqdm(category_set):
-        bare_sum_list, finetuned_sum_list = list(), list()
-        for threshold in threshold_list:
-            bare_sum_list.append(sum(simi_value > threshold for simi_value in category_bare_simi[category_name]))
-            finetuned_sum_list.append(sum(simi_value > threshold for simi_value in category_finetuned_simi[category_name]))
-        print("bare:", category_name, ":", bare_sum_list)
-        print("finetuned:", category_name, ":", finetuned_sum_list)
 
 
 if __name__ == '__main__':

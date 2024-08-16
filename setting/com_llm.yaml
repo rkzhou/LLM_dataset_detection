@@ -10,7 +10,7 @@ chatgpt3.5:
   inference_batch_size: 1
   training_epoch: 3
   training_suffix: "slimorca"
-  api_key: "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"
+  api_key: "API_KEY"
 
 gpt-4o:
   original_answer_root: "../answers"
@@ -19,4 +19,4 @@ gpt-4o:
   batch_model_num: 10
   current_batch: 1
   paraphrase_batch_file_root: "../paraphrase_files"
-  api_key: "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"
+  api_key: "API_KEY"

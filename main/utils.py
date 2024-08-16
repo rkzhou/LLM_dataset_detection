@@ -43,9 +43,9 @@ def get_pretrained_model_and_tokenizer(model_id):
     bnb_4bit_compute_dtype=torch.bfloat16
     )
     model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", quantization_config=bnb_config, trust_remote_code=True,
-                                                 token = "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")
+                                                 token = "API_KEY")
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, padding_side="left",
-                                              token = "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")
+                                              token = "API_KEY")
     tokenizer.pad_token = tokenizer.eos_token
 
     return model, tokenizer

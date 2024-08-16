@@ -14,7 +14,7 @@ class model_base():
 
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+        generated_ids = self.model.generate(**prompt, max_new_tokens=128, do_sample=True, temperature=1.0)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
@@ -49,7 +49,7 @@ class Chatmodel_0(model_base):
             format_prompt = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
             prompt_list.append(format_prompt)
 
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
         return encoded_inputs
@@ -80,7 +80,7 @@ class Chatmodel_1(model_base):
                 prompt = "### Instruction:\n{} {}\n### Response:\n".format(system_message, user_prompt)
             prompt_list.append(prompt)
 
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
         
         return encoded_inputs
@@ -109,7 +109,7 @@ class Chatmodel_2(model_base):
             prompt_list.append(prompt)
 
         
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
         return encoded_inputs
@@ -138,7 +138,7 @@ class Chatmodel_3(model_base):
                 prompt = "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant".format(system_message, user_prompt)
             prompt_list.append(prompt)
 
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
         return encoded_inputs
@@ -167,7 +167,7 @@ class Chatmodel_4(model_base):
                 prompt = "<|prompter|>{} {}</s><|assistant|>".format(system_message, user_prompt)
             prompt_list.append(prompt)
         
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
         return encoded_inputs
@@ -197,7 +197,7 @@ class Chatmodel_5(model_base):
                 prompt = "<|user|>\n{} {}\n<|assistant|>\n".format(system_message, user_prompt)
             prompt_list.append(prompt)
         
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
         return encoded_inputs
@@ -225,7 +225,7 @@ class Chatmodel_6(model_base):
                 prompt = "<|prompter|>{} {}<|endoftext|><|assistant|>".format(system_message, user_prompt)
             prompt_list.append(prompt)
         
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
 
         return encoded_inputs
@@ -256,7 +256,7 @@ class Chatmodel_7(model_base):
                 prompt = "### System:\n{}\n### User:\n{}\n### Assistant:\n".format(system_message, user_prompt)
             prompt_list.append(prompt)
 
-        encoded_inputs = self.tokenizer(prompt_list, padding=True, return_tensors='pt')
+        encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
         
         return encoded_inputs

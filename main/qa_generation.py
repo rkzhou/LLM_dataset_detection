@@ -37,7 +37,7 @@ def generate_answers(args):
 
     ### initialize model or pipeline
     if args["model_type"] == "pipeline":
-        pipeline_tokenizer = AutoTokenizer.from_pretrained(args["model_name"], padding_side="left")
+        pipeline_tokenizer = AutoTokenizer.from_pretrained(args["model_name"], padding_side="left", padding=True, truncation=True, max_length=512)
         if args["pipeline_prefix"] == None:
             pipe = pipeline(model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["inference_batch_size"], tokenizer=pipeline_tokenizer)
         else:
@@ -111,7 +111,7 @@ def generate_answers(args):
             
             # inference multiple times
             for time_index in range(args["inference_times"]):
-                responses = pipe(pipeline_prompt_list, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+                responses = pipe(pipeline_prompt_list, max_new_tokens=128, do_sample=True, temperature=1.0)
                 for i in range(len(responses)):
                     answer = responses[i][0]["generated_text"]
                     answers[time_index].append(answer)

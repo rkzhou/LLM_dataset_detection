@@ -33,7 +33,7 @@ def tokenize_text(data, tokenizer):
     }
 
     max_length = 512
-    if len(sample["input_ids"]) > 512:
+    if len(sample["input_ids"]) > max_length:
         sample["input_ids"] = sample["input_ids"][:max_length]
         sample["attention_mask"] = sample["attention_mask"][:max_length]
         sample["labels"] = sample["labels"][:max_length]
@@ -168,6 +168,7 @@ class reference_model_base():
         )
 
         trainer.train()
+        trainer.save_model(args[self.model_name]["output_dir"] + args["model_checkpoint"])
     
 
     def predict(self, args):
@@ -178,6 +179,8 @@ class reference_model_base():
         
         with open(args["general_dataset_save_path"], "rb") as file:
             dataset = pickle.load(file)
+        
+        args["subset_length"] = min(args["subset_length"], len(dataset))
         dataset = dataset.select(range(args["subset_length"]))
         data_group_num = math.ceil(len(dataset) / args[self.model_name]["prediction_batch_size"])
 
@@ -202,8 +205,8 @@ class reference_model_base():
             if current_group_saved_answer_num == args[self.model_name]["prediction_batch_size"]:
                 continue
             else:
-                begin_index = group_index * args[self.model_name]["prediction_batch_size"] + current_group_saved_answer_num
-                end_index = min(len(dataset), (group_index + 1) * args[self.model_name]["prediction_batch_size"])
+                begin_index = group_index * args[self.model_name]["prediction_batch_size"]
+                end_index = min(args["subset_length"], (group_index + 1) * args[self.model_name]["prediction_batch_size"])
 
             raw_prompt_list = list()
             
@@ -231,9 +234,8 @@ class reference_model_base():
             answers = list()
             if args["model_version"] == "bare":
                 prompt_list = self.instruct_tokenizer.apply_chat_template(raw_prompt_list, add_generation_prompt=True, tokenize=False)
-                encoded_inputs = self.instruct_tokenizer(prompt_list, padding=True, return_tensors='pt')
-                encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
-                generated_ids = self.instruct_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+                encoded_inputs = self.instruct_tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt').to("cuda")
+                generated_ids = self.instruct_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0)
                 responses = self.instruct_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
                 
                 if args[self.model_name]["bare_split_mark"] != None:
@@ -242,8 +244,8 @@ class reference_model_base():
                     else:
                         answers = self.pull_answer(responses, args[self.model_name]["bare_split_mark"])
             else:
-                encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, return_tensors='pt').to("cuda")
-                generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0, top_p=0.9, num_beams=1)
+                encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt').to("cuda")
+                generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0)
                 responses = self.finetune_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
                 
                 for response in responses:
@@ -289,7 +291,9 @@ def format_dataset(data, dataset_name):
             item = {"system": "", "instruction": data["instruction"] + " " + data["input"], "response": data["output"]}
     elif dataset_name == "Open-Orca/SlimOrca":
         item = {"system": data["conversations"][0]["value"], "instruction": data["conversations"][1]["value"], "response": data["conversations"][2]["value"]}
-    elif dataset_name == "HuggingFaceH4/ultrafeedback_binarized":
+    elif dataset_name == "allenai/ultrafeedback_binarized_cleaned":
+        item = {"system": "", "instruction": data["messages"][0]["content"], "response": data["messages"][1]["content"]}
+    elif dataset_name == "HuggingFaceH4/no_robots":
         item = {"system": "", "instruction": data["messages"][0]["content"], "response": data["messages"][1]["content"]}
     else:
         raise ValueError("Invalid dataset")
@@ -313,8 +317,11 @@ def model_execute(args):
     elif args["dataset_name"] == "Open-Orca/SlimOrca":
         dataset = dataset["train"]
         dataset = dataset.filter(lambda example: len(example["conversations"]) == 3)
-    elif args["dataset_name"] == "HuggingFaceH4/ultrafeedback_binarized":
+    elif args["dataset_name"] == "allenai/ultrafeedback_binarized_cleaned":
         dataset = dataset["train_sft"]
+    elif args["dataset_name"] == "HuggingFaceH4/no_robots":
+        dataset = dataset["train"]
+        dataset = dataset.filter(lambda example: len(example["messages"]) == 2 and example["category"] != "Coding")
     else:
         raise ValueError("Invalid dataset")
     dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
@@ -357,6 +364,7 @@ def select_data(args):
     with open(args["general_dataset_save_path"], "rb") as file:
         dataset = pickle.load(file)
     
+    args["subset_length"] = min(args["subset_length"], len(dataset))
     selected_data_index = list()
     for i in tqdm(range(args["subset_length"])):
         corpus = list()
@@ -390,7 +398,7 @@ def select_data(args):
             continue
 
         selected_data_index.append(i)
-    print(len(selected_data_index))
+    # print(len(selected_data_index))
     with open(args["selected_dataset_save_path"], "wb") as file:
         pickle.dump(selected_data_index, file)
     
