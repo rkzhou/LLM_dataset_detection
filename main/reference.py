@@ -11,6 +11,7 @@ import math
 import numpy
 import re
 import peft
+import evaluate
 from tqdm import tqdm
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -86,7 +87,7 @@ class reference_model_base():
                 "### Question: {} {} ### Answer: ".format(system_prompt, user_prompt),
                 assistant_response,
             ]
-
+        
         return messages
 
 
@@ -127,7 +128,7 @@ class reference_model_base():
                     "user_prompt": item["instruction"],
                     "assistant_response": item["response"]
                 }
-
+                
                 output_jsonl_file.write(json.dumps(json_object) + "\n")
     
 
@@ -295,6 +296,8 @@ def format_dataset(data, dataset_name):
         item = {"system": "", "instruction": data["messages"][0]["content"], "response": data["messages"][1]["content"]}
     elif dataset_name == "HuggingFaceH4/no_robots":
         item = {"system": "", "instruction": data["messages"][0]["content"], "response": data["messages"][1]["content"]}
+    elif dataset_name == "teknium/OpenHermes-2.5":
+        item = {"system": "", "instruction": data["conversations"][0]["value"], "response": data["conversations"][1]["value"]}
     else:
         raise ValueError("Invalid dataset")
     
@@ -317,13 +320,15 @@ def model_execute(args):
     elif args["dataset_name"] == "Open-Orca/SlimOrca":
         dataset = dataset["train"]
         dataset = dataset.filter(lambda example: len(example["conversations"]) == 3)
-    elif args["dataset_name"] == "allenai/ultrafeedback_binarized_cleaned":
-        dataset = dataset["train_sft"]
-    elif args["dataset_name"] == "HuggingFaceH4/no_robots":
+    elif args["dataset_name"] == "teknium/OpenHermes-2.5":
         dataset = dataset["train"]
-        dataset = dataset.filter(lambda example: len(example["messages"]) == 2 and example["category"] != "Coding")
+        dataset = dataset.filter(lambda example: len(example["conversations"]) == 2)
+        dataset = dataset.filter(lambda example: example["category"] != "coding")
+        dataset = dataset.shuffle(seed=args["seed_index"])
+        dataset = dataset.select(range(args["subset_length"]))
     else:
         raise ValueError("Invalid dataset")
+    
     dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
     with open(args["general_dataset_save_path"], "wb") as file:
         pickle.dump(dataset, file)
@@ -353,7 +358,6 @@ def model_execute(args):
 def select_data(args):
     reference_name_list = ["mistralai/Mistral-7B-v0.1", "google/gemma-7b", "meta-llama/Meta-Llama-3-8B", "Qwen/Qwen2-7B", "THUDM/glm-4-9b"]
     reference_model_num = len(reference_name_list)
-    tfidf_vectorizer = TfidfVectorizer()
 
     dataset_save_root = args["selected_dataset_save_path"].split("/")
     dataset_save_root = dataset_save_root[:-1]
@@ -366,38 +370,72 @@ def select_data(args):
     
     args["subset_length"] = min(args["subset_length"], len(dataset))
     selected_data_index = list()
-    for i in tqdm(range(args["subset_length"])):
-        corpus = list()
-        for name in reference_name_list:
-            with open("{}/answer_{}.pkl".format(args[name]["bare_prediction_save_dir"], i), "rb") as file:
-                corpus.append(pickle.load(file))
-            
-            with open("{}/answer_{}.pkl".format(args[name]["finetune_prediction_save_dir"], i), "rb") as file:
-                corpus.append(pickle.load(file))
-            
-        corpus.append(dataset[i]["response"])
-        
-        filter_corpus_flag = False
-        for answer in corpus:
-            if len(answer) < args["length_threshold"]:
-                filter_corpus_flag = True
-                break
-        if filter_corpus_flag == True:
-            continue
-        tfidf_matrix = tfidf_vectorizer.fit_transform(corpus)
-        
-        filter_similarity_flag = False
-        for j in range(reference_model_num):
-            nonmemref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j], tfidf_matrix[2*reference_model_num])[0][0].item()
-            memref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j+1], tfidf_matrix[2*reference_model_num])[0][0].item()
-            score_diff = memref_vs_benchmark - nonmemref_vs_benchmark
-            if score_diff < args["similarity_threshold"]:
-                filter_similarity_flag = True
-                break
-        if filter_similarity_flag == True:
-            continue
 
-        selected_data_index.append(i)
+    if args["metric"] == "TF-IDF":
+        tfidf_vectorizer = TfidfVectorizer()
+        for i in tqdm(range(args["subset_length"])):
+            corpus = list()
+            for name in reference_name_list:
+                with open("{}/answer_{}.pkl".format(args[name]["bare_prediction_save_dir"], i), "rb") as file:
+                    corpus.append(pickle.load(file))
+                
+                with open("{}/answer_{}.pkl".format(args[name]["finetune_prediction_save_dir"], i), "rb") as file:
+                    corpus.append(pickle.load(file))
+                
+            corpus.append(dataset[i]["response"])
+            
+            filter_corpus_flag = False
+            for answer in corpus:
+                if len(answer) < args["length_threshold"]:
+                    filter_corpus_flag = True
+                    break
+            if filter_corpus_flag == True:
+                continue
+            tfidf_matrix = tfidf_vectorizer.fit_transform(corpus)
+            
+            filter_similarity_flag = False
+            for j in range(reference_model_num):
+                nonmemref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j], tfidf_matrix[2*reference_model_num])[0][0].item()
+                memref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j+1], tfidf_matrix[2*reference_model_num])[0][0].item()
+                score_diff = memref_vs_benchmark - nonmemref_vs_benchmark
+                if score_diff < args["similarity_threshold"]:
+                    filter_similarity_flag = True
+                    break
+            if filter_similarity_flag == True:
+                continue
+
+            selected_data_index.append(i)
+    elif args["metric"] == "BERT":
+        bertscore = evaluate.load("bertscore")
+        bare_answer_list, finetuned_answer_list = list(list() for _ in range(reference_model_num)), list(list() for _ in range(reference_model_num))
+        benchmark_answer_list = list()
+        for i in tqdm(range(args["subset_length"])):
+            benchmark_answer_list.append(dataset[i]["response"])
+            for j in range(reference_model_num):
+                with open("{}/answer_{}.pkl".format(args[reference_name_list[j]]["bare_prediction_save_dir"], i), "rb") as file:
+                    bare_answer_list[j].append(pickle.load(file))
+                
+                with open("{}/answer_{}.pkl".format(args[reference_name_list[j]]["finetune_prediction_save_dir"], i), "rb") as file:
+                    finetuned_answer_list[j].append(pickle.load(file))
+
+        bare_vs_benchmark_results, finetune_vs_benchmark_results = list(), list()
+        for i in range(reference_model_num):
+            bare_vs_benchmark_results.append(bertscore.compute(predictions=bare_answer_list[i], references=benchmark_answer_list, model_type="distilbert-base-uncased"))
+            finetune_vs_benchmark_results.append(bertscore.compute(predictions=finetuned_answer_list[i], references=benchmark_answer_list, model_type="distilbert-base-uncased"))
+        
+        for i in tqdm(range(args["subset_length"])):
+            filter_similarity_flag = False
+
+            for j in range(reference_model_num):
+                BERT_simi_diff = finetune_vs_benchmark_results[j]["f1"][i] - bare_vs_benchmark_results[j]["f1"][i]
+                if BERT_simi_diff < args["similarity_threshold"]:
+                    filter_similarity_flag = True
+                    break
+
+            if filter_similarity_flag == False:
+                selected_data_index.append(i)
+            
+        
     # print(len(selected_data_index))
     with open(args["selected_dataset_save_path"], "wb") as file:
         pickle.dump(selected_data_index, file)

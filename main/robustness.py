@@ -7,66 +7,69 @@ from tqdm import tqdm
 from openai import OpenAI
 
 def get_batch_files(args, api_name):
-    client = OpenAI(api_key = args[api_name]["api_key"])
+    model_list = []
 
-    model_list = os.listdir("{}/{}".format(args[api_name]["original_answer_root"], args[api_name]["dataset_name"]))
     group_num = math.ceil(len(model_list) / args[api_name]["batch_model_num"])
-    
-    if args[api_name]["current_batch"] >= group_num:
-        raise ValueError("Batch index exceed boundary")
-    
-    start_index = args[api_name]["current_batch"] * args[api_name]["batch_model_num"]
-    end_index = (args[api_name]["current_batch"] + 1) * args[api_name]["batch_model_num"]
-    if end_index > len(model_list):
-        end_index = len(model_list)
 
-    current_batch_model_list = model_list[start_index: end_index]
-    format_data_list = list()
-    for model in current_batch_model_list:
-        text_list = os.listdir("{}/{}/{}".format(args[api_name]["original_answer_root"], args[api_name]["dataset_name"], model))
-        if "answer_scores.pt" in text_list:
-            text_list.remove("answer_scores.pt")
+    for group_index in range(group_num):
+        start_index = group_index * args[api_name]["batch_model_num"]
+        end_index = min((group_index+1) * args[api_name]["batch_model_num"], len(model_list))
+        current_batch_model_list = model_list[start_index: end_index]
 
-        for answer_index in tqdm(range(len(text_list))):
-            with open("{}/{}/{}/answer_{}.pkl".format(args[api_name]["original_answer_root"], args[api_name]["dataset_name"], model, answer_index), "rb") as answer_file:
-                original_answer = pickle.load(answer_file)
-            answer_file.close()
+        format_data_list = list() # Should not exceed 50,000 requests
+        for model in current_batch_model_list:
+            answer_list = os.listdir("{}/{}/{}".format(args[api_name]["original_answer_root"], args[api_name]["dataset_name"], model))
+            
+            if "TF-IDF_scores.pt" in answer_list:
+                answer_list.remove("TF-IDF_scores.pt")
 
-            element = {
-                "custom_id": "{}_answer_{}".format(model, answer_index),
-                "method": "POST",
-                "url": "/v1/chat/completions",
-                "body": {"model": api_name, 
-                         "messages": [{"role": "system", "content": "Please paraphrase the following sentences."},{"role": "user", "content": original_answer}]}
-            }
+            for answer_index in tqdm(answer_list):
+                with open("{}/{}/{}/{}".format(args[api_name]["original_answer_root"], args[api_name]["dataset_name"], model, answer_index), "rb") as answer_file:
+                    original_answer = pickle.load(answer_file)
+                answer_file.close()
 
-            format_data_list.append(element)
+                element = {
+                    "custom_id": "{}_{}".format(model, answer_index),
+                    "method": "POST",
+                    "url": "/v1/chat/completions",
+                    "body": {"model": api_name, 
+                            "messages": [{"role": "system", "content": "Please paraphrase the following sentences."},{"role": "user", "content": original_answer}]}
+                }
+
+                format_data_list.append(element)
+            
+        if not os.path.exists("{}/{}".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"])):
+            os.makedirs("{}/{}".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"]))
         
-    if not os.path.exists("{}/{}".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"])):
-        os.makedirs("{}/{}".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"]))
-    
-    with open("{}/{}/batch_{}.jsonl".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"], args[api_name]["current_batch"]), "w") as file:
-        for i in range(len(format_data_list)):
-            temp = json.dumps(format_data_list[i])
-            file.write(temp)
-            if i != (len(format_data_list)-1):
-                file.write("\n")
+        with open("{}/{}/batch_{}.jsonl".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"], group_index), "w") as file:
+            for i in range(len(format_data_list)):
+                temp = json.dumps(format_data_list[i])
+                file.write(temp)
+                if i != (len(format_data_list)-1):
+                    file.write("\n")
 
 
 def set_up_task(args, api_name):
     client = OpenAI(api_key = args[api_name]["api_key"])
+    
+    batch_list = os.listdir("{}/{}".format(args[api_name]["paraphrase_batch_file_root"], args[api_name]["dataset_name"]))
+    for i in range(len(batch_list)):
+        batch_input_file = client.files.create(file=open("{}/{}/batch_{}.jsonl".format(args[api_name]["paraphrase_batch_file_root"], 
+        args[api_name]["dataset_name"], i), "rb"), purpose="batch")
+        print("New batch file:", batch_input_file)
 
-    batch_input_file = client.files.create(file=open("../paraphrase_files/ultrafeedback/batch_1.jsonl", "rb"), purpose="batch")
-    batch_input_file_id = batch_input_file.id
-    return_object = client.batches.create(
-        input_file_id=batch_input_file_id,
-        endpoint="/v1/chat/completions",
-        completion_window="24h",
-        metadata={
-        "description": "ultrafeedback/batch_1"
-        }
-    )
-    print(return_object)
+        batch_input_file_id = batch_input_file.id
+        return_object = client.batches.create(
+            input_file_id=batch_input_file_id,
+            endpoint="/v1/chat/completions",
+            completion_window="24h",
+            metadata={
+            "description": "{}/batch_{}".format(args[api_name]["dataset_name"], i)
+            }
+        )
+        print("New batch task:", return_object)
+
+        print("-------------------------------")
 
 
 def get_response(args, api_name, output_file_id, save_file_path):
@@ -94,7 +97,7 @@ def extract_response(args, api_name, paraphrase_file_path):
         if not os.path.exists("{}/{}/{}".format(args[api_name]["paraphrase_answer_root"], args[api_name]["dataset_name"], model_name)):
             os.makedirs("{}/{}/{}".format(args[api_name]["paraphrase_answer_root"], args[api_name]["dataset_name"], model_name))
         
-        with open("{}/{}/{}/{}.pkl".format(args[api_name]["paraphrase_answer_root"], args[api_name]["dataset_name"], model_name, answer_index), "wb") as save_file:
+        with open("{}/{}/{}/{}".format(args[api_name]["paraphrase_answer_root"], args[api_name]["dataset_name"], model_name, answer_index), "wb") as save_file:
             pickle.dump(format_response["response"]["body"]["choices"][0]["message"]["content"], save_file)
         save_file.close()
 
@@ -106,5 +109,7 @@ if __name__ == '__main__':
 
     # get_batch_files(global_cfg, api_name)
     # set_up_task(global_cfg, api_name)
-    # get_response(global_cfg, api_name, 'file-TDd7l9OJASWanJvq8FmMFtUl', "../paraphrase_files/ultrafeedback/batch_1_response.jsonl")
-    # extract_response(global_cfg, api_name, "../paraphrase_files/ultrafeedback/batch_1_response.jsonl")
+    # get_response(global_cfg, api_name, 'file-1iZKt6xZy8ArL5XKccl9jrue', 
+    # "{}/{}/batch_2_response.jsonl".format(global_cfg[api_name]["paraphrase_batch_file_root"], global_cfg[api_name]["dataset_name"]))
+    # extract_response(global_cfg, api_name, 
+    # "{}/{}/batch_2_response.jsonl".format(global_cfg[api_name]["paraphrase_batch_file_root"], global_cfg[api_name]["dataset_name"]))

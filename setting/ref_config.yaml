@@ -1,15 +1,16 @@
-dataset_name: "HuggingFaceH4/no_robots"
-dataset_path: "../dataset/robots.pkl"
+dataset_name: "databricks/databricks-dolly-15k"
+dataset_path: "../dataset/dd15k.pkl"
 model_name: "mistralai/Mistral-7B-v0.1"
 seed_index: 42
-general_dataset_save_path: "../ref_llm_dataset/general/robots.pkl"
+general_dataset_save_path: "../ref_llm_dataset/general/dd15k.pkl"
 model_version: "bare"
 model_action: "train"
 model_checkpoint: "checkpoint-final"
 subset_length: 50000
 length_threshold: 20
 similarity_threshold: 0.25
-selected_dataset_save_path: "../ref_llm_dataset/selection/ultra_ultra_index.pkl"
+metric: "TF-IDF"
+selected_dataset_save_path: "../ref_llm_dataset/selection/dd15k_index.pkl"
 
 mistralai/Mistral-7B-v0.1:
   preprocess_dataset_save_path: "../ref_llm_dataset/mistral/ultra_ultra.jsonl"

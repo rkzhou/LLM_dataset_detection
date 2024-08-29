@@ -129,6 +129,7 @@ def compare_answers(model_answer_dir, dataset_local_name, args):
                 answer_file.close()
             
             # obtain TF-IDF vectors of all answers
+            
             tfidf_matrix = tfidf_vectorizer.fit_transform(answers)
             # calculate the best similar scores between answers from reference models and suspicious models
             for i in range(reference_model_num):
@@ -196,14 +197,17 @@ def threshold_answers(model_answer_dir, args):
     reference_model_num = int(model_num/2)
 
     nonmem_answer_num, mem_answer_num = 0, 0
+    nonmem_answer_index, mem_answer_index = list(), list()
     for j in range(question_num):
         nonmem_simi_list = similarity_scores[:reference_model_num, j].tolist()
         mem_simi_list = similarity_scores[reference_model_num:, j].tolist()
         
-        if all(x > y for x, y in zip(nonmem_simi_list, mem_simi_list)):
-            nonmem_answer_num += 1
-        elif all(x > y for x, y in zip(mem_simi_list, nonmem_simi_list)):
+        if all((x - y) > 0.0 for x, y in zip(mem_simi_list, nonmem_simi_list)):
             mem_answer_num += 1
+            mem_answer_index.append(j)
+        elif any((x - y) > 0.0 for x, y in zip(nonmem_simi_list, mem_simi_list)):
+            nonmem_answer_num += 1
+            nonmem_answer_index.append(j)
 
     print(mem_answer_num, nonmem_answer_num)
 
@@ -212,21 +216,21 @@ if __name__ == '__main__':
     with open(os.path.join("../setting", "qa_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
 
-    mem_list = ["bloom3B", "dolly3B", "dolly7B", "dolly12B", "tulu7B", "tulu13B", "pythia6.9B", "redpajama3B", "pygmalion7B", "pygmalion13B"]
+    mem_list = []
     for name in mem_list:
         compare_answers("../answers/dd15k/{}".format(name), "dd15k", global_cfg)
     
-    nonmem_list = ["mistral7B", "danube1.8B", "bagel8B", "platypus13B", "speechless13B", "tinyllama1.1B", "zephyr7B", "decilm7B", "neural7B", "yi6B"]
+    nonmem_list = []
     for name in nonmem_list:
         compare_answers("../answers/dd15k/{}".format(name), "dd15k", global_cfg)
     
 
-    mem_list = ["bloom3B", "dolly3B", "dolly7B", "dolly12B", "tulu7B", "tulu13B", "pythia6.9B", "redpajama3B", "pygmalion7B", "pygmalion13B"]
+    mem_list = []
     for name in mem_list:
        threshold_answers("../answers/dd15k/{}".format(name), global_cfg)
     
     print("----------------------------------")
-    nonmem_list = ["mistral7B", "danube1.8B", "bagel8B", "platypus13B", "speechless13B", "tinyllama1.1B", "zephyr7B", "decilm7B", "neural7B", "yi6B"]
+    nonmem_list = []
     for name in nonmem_list:
         threshold_answers("../answers/dd15k/{}".format(name), global_cfg)
 

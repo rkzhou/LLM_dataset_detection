@@ -15,8 +15,7 @@ chatgpt3.5:
 gpt-4o:
   original_answer_root: "../answers"
   paraphrase_answer_root: "../paraphrase_answers"
-  dataset_name: "ultrafeedback"
+  dataset_name: "openhermes"
   batch_model_num: 10
-  current_batch: 1
   paraphrase_batch_file_root: "../paraphrase_files"
   api_key: "API_KEY"
