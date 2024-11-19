@@ -21,6 +21,18 @@ def split_sentence(sentence):
     return re.findall(r'\b\w+\b', sentence)
 
 
+def find_all_linear_names(model):
+    cls = torch.nn.Linear
+    lora_module_names = set()
+    for name, module in model.named_modules():
+        if isinstance(module, cls):
+            names = name.split('.')
+            lora_module_names.add(names[0] if len(names) == 1 else names[-1])
+    if 'lm_head' in lora_module_names: # needed for 16-bit
+        lora_module_names.remove('lm_head')
+    return list(lora_module_names)
+
+
 def tokenize_text(data, tokenizer):
     encoded_prompt = tokenizer.encode(data["text"][0], add_special_tokens=False)
     encoded_response = tokenizer.encode(data["text"][1], add_special_tokens=False)
@@ -114,11 +126,7 @@ class reference_model_base():
         with open(args["general_dataset_save_path"], "rb") as general_dataset_file:
             dataset = pickle.load(general_dataset_file)
         
-        dataset_save_root = args[self.model_name]["preprocess_dataset_save_path"].split("/")
-        dataset_save_root = dataset_save_root[:-1]
-        dataset_save_root = os.path.join(*dataset_save_root)
-        if not os.path.exists(dataset_save_root):
-            os.makedirs(dataset_save_root)
+        os.makedirs(os.path.dirname(args[self.model_name]["preprocess_dataset_save_path"]), exist_ok=True)
         
         with open(args[self.model_name]["preprocess_dataset_save_path"], "w") as output_jsonl_file:
             for item in dataset:
@@ -136,6 +144,7 @@ class reference_model_base():
         train_dataset = datasets.load_dataset('json', data_files=args[self.model_name]["preprocess_dataset_save_path"], split="train")
         train_dataset = train_dataset.map(tokenize_text, remove_columns=train_dataset.column_names, fn_kwargs={"tokenizer": self.tokenizer})
 
+        modules = find_all_linear_names(self.model)
         self.model = peft.prepare_model_for_kbit_training(self.model)
         lora_config = peft.LoraConfig(
         r=args[self.model_name]["r"],
@@ -143,12 +152,11 @@ class reference_model_base():
         lora_dropout=args[self.model_name]["lora_dropout"],
         bias=args[self.model_name]["bias"],
         task_type=args[self.model_name]["task_type"],
-        target_modules = args[self.model_name]["target_modules"],
+        target_modules = modules,
         )
         self.model = peft.get_peft_model(self.model, lora_config)
 
-        if not os.path.exists(args[self.model_name]["output_dir"]):
-            os.makedirs(args[self.model_name]["output_dir"])
+        os.makedirs(args[self.model_name]["output_dir"], exist_ok=True)
         
         training_config = transformers.TrainingArguments(
             output_dir=args[self.model_name]["output_dir"],
@@ -156,8 +164,8 @@ class reference_model_base():
             optim=args[self.model_name]["optim"],
             num_train_epochs=args[self.model_name]["num_train_epochs"],
             save_strategy=args[self.model_name]["save_strategy"],
-            learning_rate=args[self.model_name]["learning_rate"],
-            lr_scheduler_type=args[self.model_name]["lr_scheduler_type"],
+            logging_steps=args[self.model_name]["logging_steps"],
+            learning_rate=float(args[self.model_name]["learning_rate"]),
             warmup_steps=2,
             bf16=True,
         )
@@ -172,7 +180,7 @@ class reference_model_base():
         trainer.save_model(args[self.model_name]["output_dir"] + args["model_checkpoint"])
     
 
-    def predict(self, args):
+    def predict(self, args, over_write=False):
         if args["model_version"] == "finetune":
             current_save_dir = args[self.model_name]["finetune_prediction_save_dir"]
         else:
@@ -185,34 +193,26 @@ class reference_model_base():
         dataset = dataset.select(range(args["subset_length"]))
         data_group_num = math.ceil(len(dataset) / args[self.model_name]["prediction_batch_size"])
 
-        if not os.path.exists(current_save_dir):
-            os.makedirs(current_save_dir)
+        os.makedirs(current_save_dir, exist_ok=True)
         
-        saved_answer_num = 0
         ### loop every batch of questions
         for group_index in tqdm(range(data_group_num)):
-            current_group_saved_answer_num = 0
+            begin_index = group_index * args[self.model_name]["prediction_batch_size"]
+            end_index = min(args["subset_length"], (group_index + 1) * args[self.model_name]["prediction_batch_size"])
+            data_index_list = [i for i in range(begin_index, end_index)]
+            exist_num = 0
+
             ### check if answers have been already saved
-            for i in range(args[self.model_name]["prediction_batch_size"]):
-                data_index = group_index * args[self.model_name]["prediction_batch_size"] + i
-                if os.path.exists("{}/answer_{}.pkl".format(current_save_dir, data_index)):
-                    saved_answer_num += 1
-                    current_group_saved_answer_num += 1
-                
-            if saved_answer_num == len(dataset):
-                print("Generated all answers of prompts")
-                exit()
-            
-            if current_group_saved_answer_num == args[self.model_name]["prediction_batch_size"]:
-                continue
-            else:
-                begin_index = group_index * args[self.model_name]["prediction_batch_size"]
-                end_index = min(args["subset_length"], (group_index + 1) * args[self.model_name]["prediction_batch_size"])
+            if over_write == False:
+                for data_index in data_index_list:
+                    if os.path.exists("{}/answer_{}.pkl".format(current_save_dir, data_index)):
+                        exist_num += 1
+                if exist_num == len(data_index_list):
+                    continue
 
             raw_prompt_list = list()
             
             ### preprocess prompt
-            data_index_list = [i for i in range(begin_index, end_index)]
             for data_index in data_index_list:
                 data = dataset[data_index]
                 if args["model_version"] == "bare":
@@ -292,10 +292,6 @@ def format_dataset(data, dataset_name):
             item = {"system": "", "instruction": data["instruction"] + " " + data["input"], "response": data["output"]}
     elif dataset_name == "Open-Orca/SlimOrca":
         item = {"system": data["conversations"][0]["value"], "instruction": data["conversations"][1]["value"], "response": data["conversations"][2]["value"]}
-    elif dataset_name == "allenai/ultrafeedback_binarized_cleaned":
-        item = {"system": "", "instruction": data["messages"][0]["content"], "response": data["messages"][1]["content"]}
-    elif dataset_name == "HuggingFaceH4/no_robots":
-        item = {"system": "", "instruction": data["messages"][0]["content"], "response": data["messages"][1]["content"]}
     elif dataset_name == "teknium/OpenHermes-2.5":
         item = {"system": "", "instruction": data["conversations"][0]["value"], "response": data["conversations"][1]["value"]}
     else:
@@ -307,11 +303,7 @@ def format_dataset(data, dataset_name):
 def model_execute(args):
     dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
     
-    dataset_save_root = args["general_dataset_save_path"].split("/")
-    dataset_save_root = dataset_save_root[:-1]
-    dataset_save_root = os.path.join(*dataset_save_root)
-    if not os.path.exists(dataset_save_root):
-        os.makedirs(dataset_save_root)
+    os.makedirs(os.path.dirname(args["general_dataset_save_path"]), exist_ok=True)
     
     if args["dataset_name"] == "databricks/databricks-dolly-15k":
         dataset = dataset["train"]

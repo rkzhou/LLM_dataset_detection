@@ -22,7 +22,7 @@ def fetch_dataset(args, name, hf_path):
     return dataset
 
 
-def generate_answers(args):
+def generate_answers(args, over_write=False):
     with open(args["general_dataset_save_path"], "rb") as file:
         dataset = pickle.load(file)
     with open(args["selected_dataset_save_path"], "rb") as file:
@@ -52,39 +52,31 @@ def generate_answers(args):
     else:
         raise ValueError("Invalid Model Type")
     
-    if not os.path.exists(args["answer_directory"]):
-        os.makedirs(args["answer_directory"])
-
-
-    saved_answer_num = 0
+    os.makedirs(args["answer_directory"], exist_ok=True)
+    
     ### loop every batch of questions
     for group_index in tqdm(range(data_group_num)):
-        current_group_saved_answer_num = 0
+        begin_index = group_index * args["inference_batch_size"]
+        end_index = min(args["answer_num"], (group_index+1) * args["inference_batch_size"])
+
+        exist_num = 0
+        data_index_list = [selected_data_index[i] for i in range(begin_index, end_index)]
         ### check if answers have been already saved
-        for i in range(args["inference_batch_size"]):
-            data_index = selected_data_index[min(group_index * args["inference_batch_size"] + i, args["answer_num"]-1)]
-            answer_exist_times = 0
-            for j in range(args["inference_times"]):
-                if os.path.exists("{}/answer_{}_{}.pkl".format(args["answer_directory"], data_index, j)):
-                    answer_exist_times += 1
-            if answer_exist_times == args["inference_times"]:
-                saved_answer_num += 1
-                current_group_saved_answer_num += 1
+        if over_write == False:
+            for data_index in data_index_list:
+                answer_exist_times = 0
+                for time_index in range(args["inference_times"]):
+                    if os.path.exists("{}/answer_{}_{}.pkl".format(args["answer_directory"], data_index, time_index)):
+                        answer_exist_times += 1
+                if answer_exist_times == args["inference_times"]:
+                    exist_num += 1
             
-        if saved_answer_num == args["answer_num"]:
-            print("Generated all answers of prompts")
-            exit()
-        
-        if current_group_saved_answer_num == args["inference_batch_size"]:
-            continue
-        else:
-            begin_index = group_index * args["inference_batch_size"]
-            end_index = min((group_index + 1) * args["inference_batch_size"], args["answer_num"])
+            if exist_num == len(data_index_list):
+                continue
 
         raw_prompt_list = list()
         
         ### preprocess prompt
-        data_index_list = [selected_data_index[i] for i in range(begin_index, end_index)]
         for data_index in data_index_list:
             data = dataset[data_index]
             format_data = [

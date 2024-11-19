@@ -1,5 +1,5 @@
-general_dataset_save_path: "../ref_llm_dataset/general/dd15k.pkl"
-selected_dataset_save_path: "../ref_llm_dataset/selection/dd15k_index.pkl"
+general_dataset_save_path: "../dataset/general/dd15k.pkl"
+selected_dataset_save_path: "../dataset/selection/dd15k_index.pkl"
 answer_num: 10000
 model_type: "kernel"
 pipeline_prefix: null
