@@ -2,23 +2,14 @@ import os
 import yaml
 import pickle
 import utils
-import json
 import peft
 import transformers
 import datasets
 import torch
 import math
-import numpy
-import re
 import peft
-import evaluate
 from tqdm import tqdm
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
-
-def split_sentence(sentence):
-    return re.findall(r'\b\w+\b', sentence)
 
 
 def find_all_linear_names(model):
@@ -54,20 +45,25 @@ def tokenize_text(data, tokenizer):
     return sample
 
 
-class reference_model_base():
+class reference_model():
     def __init__(self, args):
         self.model_name = args["model_name"]
         if args["model_version"] == "bare" and args["model_action"] == "train":
-            self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
+            self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name, quantized=(args["finetune_method"]=="lora"))
+            # make sure the tokenizer has bos and eos
             if self.model_name == "Qwen/Qwen2-7B":
                 self.tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
             elif self.model_name == "THUDM/glm-4-9b":
                 self.tokenizer.add_special_tokens({'bos_token' : '<sop>'})
             self.model.config.use_cache = False
         elif args["model_version"] == "finetune" and args["model_action"] == "predict":
-            self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name)
-            final_model_path = args[self.model_name]["output_dir"] + args["model_checkpoint"]
-            self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
+            final_model_path = os.path.join(args["model_output_dir"], args["model_checkpoint"])
+            if args["finetune_method"] == "lora":
+                self.finetune_model, self.finetune_tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name, quantized=(args["finetune_method"]=="lora"))
+                self.finetune_model = peft.PeftModel.from_pretrained(self.finetune_model, final_model_path)
+            elif args["finetune_method"] == "full":
+                self.finetune_model, self.finetune_tokenizer = transformers.AutoModelForCausalLM.from_pretrained(final_model_path, device_map="auto")
+            
             if self.model_name == "Qwen/Qwen2-7B":
                 self.finetune_tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
             elif self.model_name == "THUDM/glm-4-9b":
@@ -87,22 +83,6 @@ class reference_model_base():
                 self.instruct_model, self.instruct_tokenizer = utils.get_pretrained_model_and_tokenizer("THUDM/glm-4-9b-chat")
 
 
-    # this function is used to output the right formate for each row in the dataset
-    def create_text_row(self, system_prompt, user_prompt, assistant_response):
-        if system_prompt == "":
-            messages = [
-                "### Question: {} ### Answer: ".format(user_prompt),
-                assistant_response,
-            ]
-        else:
-            messages = [
-                "### Question: {} {} ### Answer: ".format(system_prompt, user_prompt),
-                assistant_response,
-            ]
-        
-        return messages
-
-
     def pull_answer(self, original_answers, split_mark, raw_prompt_list=None):
         processed_answer_list = list()
         if raw_prompt_list == None:
@@ -120,53 +100,39 @@ class reference_model_base():
                 processed_answer_list.append(true_answer)
 
         return processed_answer_list
-
-
-    def preprocess_data(self, args):
-        with open(args["general_dataset_save_path"], "rb") as general_dataset_file:
-            dataset = pickle.load(general_dataset_file)
-        
-        os.makedirs(os.path.dirname(args[self.model_name]["preprocess_dataset_save_path"]), exist_ok=True)
-        
-        with open(args[self.model_name]["preprocess_dataset_save_path"], "w") as output_jsonl_file:
-            for item in dataset:
-                json_object = {
-                    "text": self.create_text_row(item["system"], item["instruction"], item["response"]),
-                    "system_prompt": item["system"],
-                    "user_prompt": item["instruction"],
-                    "assistant_response": item["response"]
-                }
-                
-                output_jsonl_file.write(json.dumps(json_object) + "\n")
     
 
     def train(self, args):
-        train_dataset = datasets.load_dataset('json', data_files=args[self.model_name]["preprocess_dataset_save_path"], split="train")
+        # train_dataset must be formatted dataset
+        train_dataset = datasets.load_dataset('json', data_files=args["input_dataset_path"], split="train")
         train_dataset = train_dataset.map(tokenize_text, remove_columns=train_dataset.column_names, fn_kwargs={"tokenizer": self.tokenizer})
 
-        modules = find_all_linear_names(self.model)
-        self.model = peft.prepare_model_for_kbit_training(self.model)
-        lora_config = peft.LoraConfig(
-        r=args[self.model_name]["r"],
-        lora_alpha=args[self.model_name]["lora_alpha"],
-        lora_dropout=args[self.model_name]["lora_dropout"],
-        bias=args[self.model_name]["bias"],
-        task_type=args[self.model_name]["task_type"],
-        target_modules = modules,
-        )
-        self.model = peft.get_peft_model(self.model, lora_config)
-
-        os.makedirs(args[self.model_name]["output_dir"], exist_ok=True)
+        if args["finetune_method"] == "lora":
+            modules = find_all_linear_names(self.model)
+            self.model = peft.prepare_model_for_kbit_training(self.model)
+            lora_config = peft.LoraConfig(
+            r=args["r"],
+            lora_alpha=args["lora_alpha"],
+            lora_dropout=args["lora_dropout"],
+            bias=args["bias"],
+            task_type=args["task_type"],
+            target_modules = modules,
+            )
+            self.model = peft.get_peft_model(self.model, lora_config)
+        elif args["finetune_method"] == "full":
+            pass
+        else:
+            raise AttributeError("Invalid fineunte method")
         
+        os.makedirs(args["model_output_dir"], exist_ok=True)
         training_config = transformers.TrainingArguments(
-            output_dir=args[self.model_name]["output_dir"],
-            per_device_train_batch_size=args[self.model_name]["per_device_train_batch_size"],
-            optim=args[self.model_name]["optim"],
-            num_train_epochs=args[self.model_name]["num_train_epochs"],
-            save_strategy=args[self.model_name]["save_strategy"],
-            logging_steps=args[self.model_name]["logging_steps"],
-            learning_rate=float(args[self.model_name]["learning_rate"]),
-            warmup_steps=2,
+            output_dir=args["model_output_dir"],
+            per_device_train_batch_size=args["per_device_train_batch_size"],
+            optim=args["optim"],
+            num_train_epochs=args["num_train_epochs"],
+            save_strategy=args["save_strategy"],
+            logging_steps=args["logging_steps"],
+            learning_rate=float(args["learning_rate"]),
             bf16=True,
         )
         trainer = transformers.Trainer(
@@ -176,44 +142,49 @@ class reference_model_base():
             data_collator=transformers.DataCollatorForSeq2Seq(self.tokenizer),
         )
 
-        trainer.train()
-        trainer.save_model(args[self.model_name]["output_dir"] + args["model_checkpoint"])
+        trainer.train(resume_from_checkpoint=(args["continue_train"]==True))
+        final_model_path = os.path.join(args["model_output_dir"], args["model_checkpoint"])
+        trainer.save_model(final_model_path)
     
 
     def predict(self, args, over_write=False):
         if args["model_version"] == "finetune":
-            current_save_dir = args[self.model_name]["finetune_prediction_save_dir"]
+            current_save_dir = args["finetune_prediction_dir"]
         else:
-            current_save_dir = args[self.model_name]["bare_prediction_save_dir"]
+            current_save_dir = args["bare_prediction_dir"]
         
-        with open(args["general_dataset_save_path"], "rb") as file:
+        with open(args["input_dataset_path"], "rb") as file:
             dataset = pickle.load(file)
         
-        args["subset_length"] = min(args["subset_length"], len(dataset))
-        dataset = dataset.select(range(args["subset_length"]))
-        data_group_num = math.ceil(len(dataset) / args[self.model_name]["prediction_batch_size"])
+        if args["selected_index_path"] != None:
+            with open(args["selected_index_path"], "rb") as file:
+                tainted_index = pickle.load(file)
+            dataset = dataset.filter(lambda example: example['index'] in tainted_index)
+        data_group_num = math.ceil(len(dataset) / args["prediction_batch_size"])
 
         os.makedirs(current_save_dir, exist_ok=True)
         
         ### loop every batch of questions
         for group_index in tqdm(range(data_group_num)):
-            begin_index = group_index * args[self.model_name]["prediction_batch_size"]
-            end_index = min(args["subset_length"], (group_index + 1) * args[self.model_name]["prediction_batch_size"])
-            data_index_list = [i for i in range(begin_index, end_index)]
+            begin_index = group_index * args["prediction_batch_size"]
+            end_index = min(len(dataset), (group_index + 1) * args["prediction_batch_size"])
+            # store its true index inside original dataset
+            query_index_list = [dataset[i]["index"] for i in range(begin_index, end_index)]
+
             exist_num = 0
 
             ### check if answers have been already saved
             if over_write == False:
-                for data_index in data_index_list:
+                for data_index in query_index_list:
                     if os.path.exists("{}/answer_{}.pkl".format(current_save_dir, data_index)):
                         exist_num += 1
-                if exist_num == len(data_index_list):
+                if exist_num == len(query_index_list):
                     continue
 
             raw_prompt_list = list()
             
             ### preprocess prompt
-            for data_index in data_index_list:
+            for data_index in range(begin_index, end_index):
                 data = dataset[data_index]
                 if args["model_version"] == "bare":
                     if data["system"] == "":
@@ -239,11 +210,11 @@ class reference_model_base():
                 generated_ids = self.instruct_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0)
                 responses = self.instruct_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
                 
-                if args[self.model_name]["bare_split_mark"] != None:
-                    if args[self.model_name]["bare_split_mark"] == "question":
-                        answers = self.pull_answer(responses, args[self.model_name]["bare_split_mark"], raw_prompt_list)
+                if args["bare_split_mark"] != None:
+                    if args["bare_split_mark"] == "question":
+                        answers = self.pull_answer(responses, args["bare_split_mark"], raw_prompt_list)
                     else:
-                        answers = self.pull_answer(responses, args[self.model_name]["bare_split_mark"])
+                        answers = self.pull_answer(responses, args["bare_split_mark"])
             else:
                 encoded_inputs = self.finetune_tokenizer(raw_prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt').to("cuda")
                 generated_ids = self.finetune_model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=1.0)
@@ -253,93 +224,15 @@ class reference_model_base():
                     answer = response.split("### Answer: ")[-1]
                     answers.append(answer)
                 
-            for i in range(len(data_index_list)):
-                with open("{}/answer_{}.pkl".format(current_save_dir, data_index_list[i]), 'wb') as file:
+            for i in range(len(query_index_list)):
+                with open("{}/answer_{}.pkl".format(current_save_dir, query_index_list[i]), 'wb') as file:
                     pickle.dump(answers[i], file)
-            
-
-
-class Mistral(reference_model_base):
-    pass
-
-
-class Gemma(reference_model_base):
-    pass
-
-
-class Llama3(reference_model_base):
-    pass
-
-
-class Qwen(reference_model_base):
-    pass
-
-
-class Glm(reference_model_base):
-    pass
-
-
-def format_dataset(data, dataset_name):
-    if dataset_name == "databricks/databricks-dolly-15k":
-        if data["context"] == "":
-            item = {"system": "", "instruction": data["instruction"], "response": data["response"]}
-        else:
-            item = {"system": "", "instruction": data["context"] + " " + data["instruction"], "response": data["response"]}
-    elif dataset_name == "tatsu-lab/alpaca":
-        if data["input"] == "":
-            item = {"system": "", "instruction": data["instruction"], "response": data["output"]}
-        else:
-            item = {"system": "", "instruction": data["instruction"] + " " + data["input"], "response": data["output"]}
-    elif dataset_name == "Open-Orca/SlimOrca":
-        item = {"system": data["conversations"][0]["value"], "instruction": data["conversations"][1]["value"], "response": data["conversations"][2]["value"]}
-    elif dataset_name == "teknium/OpenHermes-2.5":
-        item = {"system": "", "instruction": data["conversations"][0]["value"], "response": data["conversations"][1]["value"]}
-    else:
-        raise ValueError("Invalid dataset")
-    
-    return item
 
 
 def model_execute(args):
-    dataset = utils.get_dataset(args["dataset_name"], args["dataset_path"])
-    
-    os.makedirs(os.path.dirname(args["general_dataset_save_path"]), exist_ok=True)
-    
-    if args["dataset_name"] == "databricks/databricks-dolly-15k":
-        dataset = dataset["train"]
-    elif args["dataset_name"] == "tatsu-lab/alpaca":
-        dataset = dataset["train"]
-    elif args["dataset_name"] == "Open-Orca/SlimOrca":
-        dataset = dataset["train"]
-        dataset = dataset.filter(lambda example: len(example["conversations"]) == 3)
-    elif args["dataset_name"] == "teknium/OpenHermes-2.5":
-        dataset = dataset["train"]
-        dataset = dataset.filter(lambda example: len(example["conversations"]) == 2)
-        dataset = dataset.filter(lambda example: example["category"] != "coding")
-        dataset = dataset.shuffle(seed=args["seed_index"])
-        dataset = dataset.select(range(args["subset_length"]))
-    else:
-        raise ValueError("Invalid dataset")
-    
-    dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
-    with open(args["general_dataset_save_path"], "wb") as file:
-        pickle.dump(dataset, file)
-    
-    if args["model_name"] == "mistralai/Mistral-7B-v0.1":
-        model = Mistral(args)
-    elif args["model_name"] == "google/gemma-7b":
-        model = Gemma(args)
-    elif args["model_name"] == "meta-llama/Meta-Llama-3-8B":
-        model = Llama3(args)
-    elif args["model_name"] == "Qwen/Qwen2-7B":
-        model = Qwen(args)
-    elif args["model_name"] == "THUDM/glm-4-9b":
-        model = Glm(args)
-    else:
-        raise ValueError("Invalid model name")
-    
+    # create models and execute
+    model = reference_model(args)
     if args["model_version"] == "bare" and args["model_action"] == "train":
-        model.preprocess_data(args)
         model.train(args)
     elif args["model_version"] == "bare" and args["model_action"] == "predict":
         model.predict(args)
@@ -347,94 +240,12 @@ def model_execute(args):
         model.predict(args)
 
 
-def select_data(args):
-    reference_name_list = ["mistralai/Mistral-7B-v0.1", "google/gemma-7b", "meta-llama/Meta-Llama-3-8B", "Qwen/Qwen2-7B", "THUDM/glm-4-9b"]
-    reference_model_num = len(reference_name_list)
-
-    dataset_save_root = args["selected_dataset_save_path"].split("/")
-    dataset_save_root = dataset_save_root[:-1]
-    dataset_save_root = os.path.join(*dataset_save_root)
-    if not os.path.exists(dataset_save_root):
-        os.makedirs(dataset_save_root)
-    
-    with open(args["general_dataset_save_path"], "rb") as file:
-        dataset = pickle.load(file)
-    
-    args["subset_length"] = min(args["subset_length"], len(dataset))
-    selected_data_index = list()
-
-    if args["metric"] == "TF-IDF":
-        tfidf_vectorizer = TfidfVectorizer()
-        for i in tqdm(range(args["subset_length"])):
-            corpus = list()
-            for name in reference_name_list:
-                with open("{}/answer_{}.pkl".format(args[name]["bare_prediction_save_dir"], i), "rb") as file:
-                    corpus.append(pickle.load(file))
-                
-                with open("{}/answer_{}.pkl".format(args[name]["finetune_prediction_save_dir"], i), "rb") as file:
-                    corpus.append(pickle.load(file))
-                
-            corpus.append(dataset[i]["response"])
-            
-            filter_corpus_flag = False
-            for answer in corpus:
-                if len(answer) < args["length_threshold"]:
-                    filter_corpus_flag = True
-                    break
-            if filter_corpus_flag == True:
-                continue
-            tfidf_matrix = tfidf_vectorizer.fit_transform(corpus)
-            
-            filter_similarity_flag = False
-            for j in range(reference_model_num):
-                nonmemref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j], tfidf_matrix[2*reference_model_num])[0][0].item()
-                memref_vs_benchmark = cosine_similarity(tfidf_matrix[2*j+1], tfidf_matrix[2*reference_model_num])[0][0].item()
-                score_diff = memref_vs_benchmark - nonmemref_vs_benchmark
-                if score_diff < args["similarity_threshold"]:
-                    filter_similarity_flag = True
-                    break
-            if filter_similarity_flag == True:
-                continue
-
-            selected_data_index.append(i)
-    elif args["metric"] == "BERT":
-        bertscore = evaluate.load("bertscore")
-        bare_answer_list, finetuned_answer_list = list(list() for _ in range(reference_model_num)), list(list() for _ in range(reference_model_num))
-        benchmark_answer_list = list()
-        for i in tqdm(range(args["subset_length"])):
-            benchmark_answer_list.append(dataset[i]["response"])
-            for j in range(reference_model_num):
-                with open("{}/answer_{}.pkl".format(args[reference_name_list[j]]["bare_prediction_save_dir"], i), "rb") as file:
-                    bare_answer_list[j].append(pickle.load(file))
-                
-                with open("{}/answer_{}.pkl".format(args[reference_name_list[j]]["finetune_prediction_save_dir"], i), "rb") as file:
-                    finetuned_answer_list[j].append(pickle.load(file))
-
-        bare_vs_benchmark_results, finetune_vs_benchmark_results = list(), list()
-        for i in range(reference_model_num):
-            bare_vs_benchmark_results.append(bertscore.compute(predictions=bare_answer_list[i], references=benchmark_answer_list, model_type="distilbert-base-uncased"))
-            finetune_vs_benchmark_results.append(bertscore.compute(predictions=finetuned_answer_list[i], references=benchmark_answer_list, model_type="distilbert-base-uncased"))
-        
-        for i in tqdm(range(args["subset_length"])):
-            filter_similarity_flag = False
-
-            for j in range(reference_model_num):
-                BERT_simi_diff = finetune_vs_benchmark_results[j]["f1"][i] - bare_vs_benchmark_results[j]["f1"][i]
-                if BERT_simi_diff < args["similarity_threshold"]:
-                    filter_similarity_flag = True
-                    break
-
-            if filter_similarity_flag == False:
-                selected_data_index.append(i)
-            
-        
-    # print(len(selected_data_index))
-    with open(args["selected_dataset_save_path"], "wb") as file:
-        pickle.dump(selected_data_index, file)
-    
-
-
 if __name__ == '__main__':
     with open(os.path.join("../setting", "ref_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
+    global_cfg = {
+        key: (value.format(dataset_alias=global_cfg["dataset_alias"], model_alias=global_cfg["model_alias"]) if isinstance(value, str) else value)
+        for key, value in global_cfg.items()
+    }
+
     model_execute(global_cfg)

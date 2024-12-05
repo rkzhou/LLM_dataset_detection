@@ -1,13 +1,16 @@
-general_dataset_save_path: "../dataset/general/dd15k.pkl"
-selected_dataset_save_path: "../dataset/selection/dd15k_index.pkl"
-answer_num: 10000
+dataset_alias: dd15k
+
+general_dataset_path: "../datasets/original/general/{dataset_alias}.pkl"
+selected_index_path: "../datasets/original/selection/{dataset_alias}_{metric}.pkl"
 model_type: "kernel"
 pipeline_prefix: null
 model_template: 4
 model_name: "ikala/bloom-zh-3b-chat"
 inference_batch_size: 4
 inference_times: 3
-pull_answer_format: "question"
-answer_directory: "../answers/dd15k/bloom3B"
+do_sample: True
+temperature: 1.0
+split_symbol: "question"
+answer_dir: "../answers/suspect_models/{dataset_alias}/{model_name}"
 seed_index: 42
-metric: "TF-IDF"
+metric: "TFIDF"

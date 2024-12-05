@@ -1,112 +1,28 @@
-dataset_name: "databricks/databricks-dolly-15k"
-dataset_path: "../dataset/dd15k.pkl"
+dataset_alias: dd15k
+model_alias: mistral
+
+input_dataset_path: "../datasets/original/format/{dataset_alias}.jsonl"
+selected_index_path: null
+
 model_name: "mistralai/Mistral-7B-v0.1"
-seed_index: 42
-general_dataset_save_path: "../ref_llm_dataset/general/dd15k.pkl"
 model_version: "bare"
 model_action: "train"
+finetune_method: "lora"
+continue_train: False
 model_checkpoint: "checkpoint-final"
-subset_length: 50000
-length_threshold: 20
-similarity_threshold: 0.25
-metric: "TF-IDF"
-selected_dataset_save_path: "../ref_llm_dataset/selection/dd15k_index.pkl"
-
-mistralai/Mistral-7B-v0.1:
-  preprocess_dataset_save_path: "../ref_llm_dataset/mistral/dd15k.jsonl"
-  output_dir: "../ref_models/mistral/dd15k/"
-  r: 8
-  lora_alpha: 32
-  lora_dropout: 0.05
-  bias: "none"
-  task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 8
-  optim: "paged_adamw_8bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  logging_steps: 500
-  learning_rate: 1e-4
-  bare_prediction_save_dir: "../ref_llm_answers/bare/mistral/dd15k"
-  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/mistral/dd15k"
-  prediction_batch_size: 64
-  bare_split_mark: "[/INST]"
-
-
-google/gemma-7b:
-  preprocess_dataset_save_path: "../ref_llm_dataset/gemma/dd15k.jsonl"
-  output_dir: "../ref_models/gemma/dd15k/"
-  r: 8
-  lora_alpha: 32
-  lora_dropout: 0.05
-  bias: "none"
-  task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 8
-  optim: "paged_adamw_8bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  logging_steps: 500
-  learning_rate: 1e-4
-  bare_prediction_save_dir: "../ref_llm_answers/bare/gemma/dd15k"
-  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/gemma/dd15k"
-  prediction_batch_size: 64
-  bare_split_mark: "model\n"
-
-
-meta-llama/Meta-Llama-3-8B:
-  preprocess_dataset_save_path: "../ref_llm_dataset/llama/dd15k.jsonl"
-  output_dir: "../ref_models/llama/dd15k/"
-  r: 8
-  lora_alpha: 32
-  lora_dropout: 0.05
-  bias: "none"
-  task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 8
-  optim: "paged_adamw_8bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  logging_steps: 500
-  learning_rate: 1e-4
-  bare_prediction_save_dir: "../ref_llm_answers/bare/llama/dd15k"
-  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/llama/dd15k"
-  prediction_batch_size: 64
-  bare_split_mark: "assistant\n"
-
-
-Qwen/Qwen2-7B:
-  preprocess_dataset_save_path: "../ref_llm_dataset/qwen/dd15k.jsonl"
-  output_dir: "../ref_models/qwen/dd15k/"
-  r: 8
-  lora_alpha: 32
-  lora_dropout: 0.05
-  bias: "none"
-  task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 8
-  optim: "paged_adamw_8bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  logging_steps: 500
-  learning_rate: 1e-4
-  bare_prediction_save_dir: "../ref_llm_answers/bare/qwen/dd15k"
-  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/qwen/dd15k"
-  prediction_batch_size: 64
-  bare_split_mark: "assistant\n"
-
-
-THUDM/glm-4-9b:
-  preprocess_dataset_save_path: "../ref_llm_dataset/glm/dd15k.jsonl"
-  output_dir: "../ref_models/glm/dd15k/"
-  r: 8
-  lora_alpha: 32
-  lora_dropout: 0.05
-  bias: "none"
-  task_type: "CAUSAL_LM"
-  per_device_train_batch_size: 8
-  optim: "paged_adamw_8bit"
-  num_train_epochs: 3.0
-  save_strategy: "epoch"
-  logging_steps: 500
-  learning_rate: 1e-4
-  bare_prediction_save_dir: "../ref_llm_answers/bare/glm/dd15k"
-  finetune_prediction_save_dir: "../ref_llm_answers/finetuned/glm/dd15k"
-  prediction_batch_size: 64
-  bare_split_mark: "question"
+model_output_dir: "../models/reference/original/{model_alias}/{dataset_alias}"
+r: 8
+lora_alpha: 32
+lora_dropout: 0.05
+bias: "none"
+task_type: "CAUSAL_LM"
+per_device_train_batch_size: 8
+optim: "paged_adamw_8bit"
+num_train_epochs: 3.0
+save_strategy: "epoch"
+logging_steps: 500
+learning_rate: 1e-4
+bare_prediction_dir: "../answers/reference/bare/{model_alias}/{dataset_alias}"
+finetune_prediction_dir: "../answers/reference/original/finetune/{model_alias}/{dataset_alias}"
+prediction_batch_size: 64
+bare_split_mark: "[/INST]"   # "[/INST]" for mistral, "model\n" for gemma, "assistant\n" for llama and qwen, "question" for glm

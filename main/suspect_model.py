@@ -2,11 +2,9 @@ import utils
 
 
 class model_base():
-    def __init__(self, name=None):
-        self.name = name
-        if self.name == 'None':
-            raise ValueError("Must state the name of model")
-        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.name)
+    def __init__(self, args):
+        self.args = args
+        self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.args["model_name"])
 
 
     def preprocess_prompt(self, raw_prompts):
@@ -14,17 +12,20 @@ class model_base():
 
 
     def generate_response(self, prompt):
-        generated_ids = self.model.generate(**prompt, max_new_tokens=128, do_sample=True, temperature=1.0)
+        if self.args["do_sample"] == True:
+            generated_ids = self.model.generate(**prompt, max_new_tokens=128, do_sample=True, temperature=self.args["temperature"])
+        else:
+            generated_ids = self.model.generate(**prompt, max_new_tokens=128)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses
 
 
-    def pull_answer(self, original_answers, split_mark, raw_prompt_list=None):
+    def pull_answer(self, original_answers, raw_prompt_list=None):
         processed_answer_list = list()
         if raw_prompt_list == None:
             for answer in original_answers:
-                true_answer = answer.split(split_mark)[-1]
+                true_answer = answer.split(self.args["split_symbol"])[-1]
                 processed_answer_list.append(true_answer)
         else:
             for i in range(len(original_answers)):
@@ -67,12 +68,8 @@ class Chatmodel_1(model_base):
     def preprocess_prompt(self, inputs):
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
             
             if system_message == "":
                 prompt = "### Instruction:\n{}\n### Response:\n".format(user_prompt)
@@ -95,12 +92,8 @@ class Chatmodel_2(model_base):
     def preprocess_prompt(self, inputs):
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
             
             if system_message == "":
                 prompt = "<|user|> {} <|model|>".format(user_prompt)
@@ -125,12 +118,8 @@ class Chatmodel_3(model_base):
     def preprocess_prompt(self, inputs):
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
         
             if system_message == "":
                 prompt = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant".format(user_prompt)
@@ -154,12 +143,8 @@ class Chatmodel_4(model_base):
     def preprocess_prompt(self, inputs):    
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
         
             if system_message == "":
                 prompt = "<|prompter|>{}</s><|assistant|>".format(user_prompt)
@@ -184,12 +169,8 @@ class Chatmodel_5(model_base):
     def preprocess_prompt(self, inputs):    
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
 
             if system_message == "":
                 prompt = "<|user|>\n{}\n<|assistant|>\n".format(user_prompt)
@@ -212,12 +193,8 @@ class Chatmodel_6(model_base):
     def preprocess_prompt(self, inputs):    
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
         
             if system_message == "":
                 prompt = "<|prompter|>{}<|endoftext|><|assistant|>".format(user_prompt)
@@ -243,12 +220,8 @@ class Chatmodel_7(model_base):
     def preprocess_prompt(self, inputs):
         prompt_list = list()
         for input in inputs:
-            system_message, user_prompt = "", ""
-            for i in range(len(input)):
-                if input[i]["role"] == "system":
-                    system_message = input[i]["content"]
-                elif input[i]["role"] == "user":
-                    user_prompt = input[i]["content"]
+            system_message = input[0]["content"]
+            user_prompt = input[1]["content"]
             
             if system_message == "":
                 prompt = "### User:\n{}\n### Assistant:\n".format(user_prompt)

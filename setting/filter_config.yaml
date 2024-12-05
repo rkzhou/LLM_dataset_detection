@@ -1,0 +1,13 @@
+dataset_alias: dd15k
+general_dataset_path: "../datasets/original/general/{dataset_alias}.pkl"
+bare_prediction_dir: "../answers/reference/bare/{model_alias}/{dataset_alias}"
+finetune_prediction_dir: "../answers/reference/original/finetune/{model_alias}/{dataset_alias}"
+selected_index_path: "../datasets/original/selection/{dataset_alias}_{metric}.pkl"
+
+filter_bare_list: ["mistral", "gemma", "llama", "qwen", "glm"]
+filter_finetune_list: {"mistral": ["mistral"], "gemma": ["gemma"], "llama": ["llama"], "qwen": ["qwen"], "glm": ["glm"]}
+length_threshold: 20
+similarity_threshold: 0.25
+metric: "TFIDF"
+suspect_answer_dir: "../answers/suspect_models/{dataset_alias}"
+inference_times: 3

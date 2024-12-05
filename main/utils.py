@@ -1,18 +1,31 @@
 import pickle
 import os
 import torch
+import json
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 
+def get_pretrained_model_and_tokenizer(model_id, quantized=True):
+    bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16
+    )
+
+    if quantized == True:
+        model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", quantization_config=bnb_config, trust_remote_code=True)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, padding_side="left")
+    tokenizer.pad_token = tokenizer.eos_token
+
+    return model, tokenizer
+
 def save_hf_dataset(dataset_name, save_path):
     dataset = load_dataset(dataset_name)
-    dataset_save_root = save_path.split("/")
-    dataset_save_root = dataset_save_root[:-1]
-    dataset_save_root = os.path.join(*dataset_save_root)
-
-    if not os.path.exists(dataset_save_root):
-        os.makedirs(dataset_save_root)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     with open(save_path, 'wb') as file:
         pickle.dump(dataset, file)
@@ -35,15 +48,29 @@ def get_dataset(dataset_name, path):
     return dataset
 
 
-def get_pretrained_model_and_tokenizer(model_id):
-    bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_use_double_quant=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.bfloat16
-    )
-    model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", quantization_config=bnb_config, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, padding_side="left")
-    tokenizer.pad_token = tokenizer.eos_token
+def format_data(args):
+    with open(args["general_dataset_path"], "rb") as general_dataset_file:
+        dataset = pickle.load(general_dataset_file)
+    
+    os.makedirs(os.path.dirname(args["format_dataset_path"]), exist_ok=True)
+    
+    with open(args["format_dataset_path"], "w") as output_jsonl_file:
+        for item in dataset:
+            json_object = {"text": create_text_row(item["system"], item["instruction"], item["response"])}
+            output_jsonl_file.write(json.dumps(json_object) + "\n")
 
-    return model, tokenizer
+
+# this function is used to output the right formate for each row in the dataset
+def create_text_row(system_prompt, user_prompt, assistant_response):
+    if system_prompt == "":
+        messages = [
+            "### Question: {} ### Answer: ".format(user_prompt),
+            assistant_response,
+        ]
+    else:
+        messages = [
+            "### Question: {} {} ### Answer: ".format(system_prompt, user_prompt),
+            assistant_response,
+        ]
+    
+    return messages
