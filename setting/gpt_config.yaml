@@ -6,8 +6,8 @@ inference_times: 3
 metric: "TFIDF"
 log_path: "../post_paraphrase_inputs/paraphrase_log.txt"
 
-prior_paraphrase_input_dir: "../prior_paraphrase_inputs"
-prior_paraphrase_output_dir: "../prior_paraphrase_outputs"
+prior_paraphrase_input_path: "../prior_paraphrase_inputs/{dataset_alias}.jsonl"
+prior_paraphrase_output_path: "../prior_paraphrase_outputs/{dataset_alias}.jsonl"
 paraphrase_dataset_path: "../datasets/paraphrase/{dataset_alias}.pkl"
 
 original_answer_dir: "../answers/suspect_models/{dataset_alias}"

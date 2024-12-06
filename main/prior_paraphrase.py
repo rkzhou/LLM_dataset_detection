@@ -3,6 +3,7 @@ import yaml
 import pickle
 import json
 import datasets
+import re
 from tqdm import tqdm
 from openai import OpenAI
 
@@ -22,9 +23,9 @@ def get_batch_files(args):
 
         format_data_list.append(element)
     
-    os.makedirs(args["prior_paraphrase_input_dir"], exist_ok=True)
+    os.makedirs(os.path.dirname(args["prior_paraphrase_input_path"]), exist_ok=True)
     
-    with open("{}/{}.jsonl".format(args["prior_paraphrase_input_dir"], args["dataset_alias"]), "w") as file:
+    with open(args["prior_paraphrase_input_path"], "w") as file:
         for i in range(len(format_data_list)):
             temp = json.dumps(format_data_list[i])
             file.write(temp)
@@ -32,11 +33,14 @@ def get_batch_files(args):
                 file.write("\n")
 
 
-def set_up_task(args):
+def set_up_task(args, overwrite_log=True):
     client = OpenAI(api_key = args["api_key"])
+
+    os.makedirs(os.path.dirname(args["log_path"]), exist_ok=True)
+    if os.path.exists(args["log_path"]) and overwrite_log:
+        os.remove(args["log_path"])
     
-    batch_input_file = client.files.create(file=open("{}/{}.jsonl".format(args["prior_paraphrase_input_dir"], args["dataset_alias"]), "rb"), purpose="batch")
-    print("New batch file:", batch_input_file)
+    batch_input_file = client.files.create(file=open(args["prior_paraphrase_input_path"], "rb"), purpose="batch")
 
     batch_input_file_id = batch_input_file.id
     return_object = client.batches.create(
@@ -47,27 +51,36 @@ def set_up_task(args):
         "description": "{}/prior_paraphrase".format(args["dataset_alias"])
         }
     )
-    print("New batch task:", return_object)
 
-    print("-------------------------------")
+    with open(args["log_path"], "a") as log_file:
+        print("New batch task: {}".format(return_object), file=log_file)
 
 
-def get_response(args, output_file_id):
+def get_response(args):
     client = OpenAI(api_key = args["api_key"])
 
-    content = client.files.content(output_file_id)
-    file_data_bytes = content.read()
+    with open(args["log_path"], "r") as file:
+        lines = file.readlines()
+    for batch_info in lines:
+        id_match = re.search(r"id='(.*?)'", batch_info)
+        batch_id = id_match.group(1) if id_match else None
+        output_file_id = client.batches.retrieve(batch_id).output_file_id
 
-    os.makedirs(args["prior_paraphrase_output_dir"], exist_ok=True)
-    with open("{}/{}.jsonl".format(args["prior_paraphrase_output_dir"], args["dataset_alias"]), "wb") as file:
-        file.write(file_data_bytes)
+        if output_file_id != None:
+            content = client.files.content(output_file_id)
+            file_data_bytes = content.read()
+
+            os.makedirs(os.path.dirname(args["prior_paraphrase_output_path"]), exist_ok=True)
+            with open(args["prior_paraphrase_output_path"], "wb") as file:
+                file.write(file_data_bytes)
+        else:
+            print("Paraphrasing dataset is not completed")
 
 
 def extract_response(args):
-    with open("{}/{}.jsonl".format(args["prior_paraphrase_output_dir"], args["dataset_alias"]), "rb") as paraphrase_file:
+    with open(args["prior_paraphrase_output_path"], "rb") as paraphrase_file:
         responses = paraphrase_file.read()
-    paraphrase_file.close()
-
+    
     with open(args["general_dataset_path"], "rb") as file:
         dataset = pickle.load(file)
     
@@ -78,7 +91,8 @@ def extract_response(args):
         item = {
             "system": dataset[index]["system"],
             "instruction": dataset[index]["instruction"],
-            "response": format_response["response"]["body"]["choices"][0]["message"]["content"]
+            "response": format_response["response"]["body"]["choices"][0]["message"]["content"],
+            "index": dataset[index]['index']
         }
         
         paraphrased_list.append(item)
@@ -100,5 +114,5 @@ if __name__ == '__main__':
 
     get_batch_files(global_cfg)
     set_up_task(global_cfg)
-    # get_response(global_cfg, 'file-1iZKt6xZy8ArL5XKccl9jrue')
-    # extract_response(global_cfg)
+    get_response(global_cfg)
+    extract_response(global_cfg)

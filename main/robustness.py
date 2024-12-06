@@ -38,7 +38,7 @@ def get_batch_files(args):
         chat_data_list = list() # Attention: Should not exceed 50,000 requests!!!
         for i in range(len(tainted_index)):
             for time_index in range(args["inference_times"]):
-                with open("{}/{}/answer_{}_{}.pkl".format(args["original_answer_dir"].format(dataset_alias=args["dataset_alias"]), suspect_model_name, tainted_index[i], time_index), "rb") as answer_file:
+                with open("{}/{}/answer_{}_{}.pkl".format(args["original_answer_dir"], suspect_model_name, tainted_index[i], time_index), "rb") as answer_file:
                     original_answer = pickle.load(answer_file)
                 answer_file.close()
 
@@ -70,11 +70,11 @@ def get_batch_files(args):
                             file.write("\n")
 
 
-def set_up_task(args):
+def set_up_task(args, overwrite_log=True):
     client = OpenAI(api_key = args["api_key"])
     
     os.makedirs(os.path.dirname(args["log_path"]), exist_ok=True)
-    if os.path.exists(args["log_path"]):
+    if os.path.exists(args["log_path"]) and overwrite_log:
         os.remove(args["log_path"])
     
     batch_input_dirs = get_leaf_folders(args["post_paraphrase_input_dir"])
@@ -84,8 +84,6 @@ def set_up_task(args):
         batch_list = os.listdir(input_dir)
         for batch_input in batch_list:
             client_file = client.files.create(file=open("{}/{}".format(input_dir, batch_input), "rb"), purpose="batch")
-            with open(args["log_path"], "a") as log_file:
-                print("New batch file: {}".format(client_file), file=log_file)
 
             file_id = client_file.id
             return_object = client.batches.create(
@@ -98,35 +96,54 @@ def set_up_task(args):
             )
             with open(args["log_path"], "a") as log_file:
                 print("New batch task: {}".format(return_object), file=log_file)
-                print("-------------------------------", file=log_file)
 
 
-def get_response(args, output_file_id, model_name, file_id):
+def get_response(args):
     client = OpenAI(api_key = args["api_key"])
+    
+    with open(args["log_path"], "r") as file:
+        lines = file.readlines()
+    for batch_info in lines:
+        id_match = re.search(r"id='(.*?)'", batch_info)
+        description_match = re.search(r"description': '(.*?)'", batch_info)
+        batch_id = id_match.group(1) if id_match else None
+        description = description_match.group(1) if description_match else None
+        
+        output_file_id = client.batches.retrieve(batch_id).output_file_id
+        path_parts = description.split(os.sep)
+        model_name = os.path.join(path_parts[0], path_parts[1])
+        file_id = path_parts[-1]
+        
+        if output_file_id != None:
+            content = client.files.content(output_file_id)
+            file_data_bytes = content.read()
 
-    content = client.files.content(output_file_id)
-    file_data_bytes = content.read()
+            os.makedirs("{}/{}".format(args["post_paraphrase_output_dir"], model_name), exist_ok=True)
+            with open("{}/{}/{}".format(args["post_paraphrase_output_dir"], model_name, file_id), "wb") as file:
+                file.write(file_data_bytes)
+        else:
+            print("Not completed: {}".format(model_name))
 
-    os.makedirs("{}/{}".format(args["post_paraphrase_output_dir"], model_name), exist_ok=True)
-    with open("{}/{}/{}".format(args["post_paraphrase_output_dir"], model_name, file_id), "wb") as file:
-        file.write(file_data_bytes)
 
 
-def extract_response(args, paraphrase_file_path):
-    with open(paraphrase_file_path, "r") as paraphrase_file:
-        responses = paraphrase_file.read()
-
-    response_list = responses.splitlines()
-    for response in response_list:
-        format_response = json.loads(response)
-        model_answer_id = format_response["custom_id"]
-        split_pos = model_answer_id.find("_answer_")
-        model_name = model_answer_id[:split_pos]
-        answer_index = model_answer_id[split_pos+1:]
-
-        os.makedirs("{}/{}".format(args["paraphrase_answer_dir"], model_name), exist_ok=True)
-        with open("{}/{}/{}.pkl".format(args["paraphrase_answer_dir"], model_name, answer_index), "wb") as file:
-            pickle.dump(format_response["response"]["body"]["choices"][0]["message"]["content"], file)
+def extract_response(args):
+    folders = get_leaf_folders(args["post_paraphrase_output_dir"])
+    for folder in folders:
+        file_names = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+        
+        for file_name in file_names:
+            with open("{}/{}".format(folder, file_name), "r") as paraphrase_file:
+                responses = paraphrase_file.read()
+                response_list = responses.splitlines()
+                for response in response_list:
+                    format_response = json.loads(response)
+                    model_answer_id = format_response["custom_id"]
+                    split_pos = model_answer_id.find("_answer_")
+                    model_name = model_answer_id[:split_pos]
+                    answer_index = model_answer_id[split_pos+1:]
+                    os.makedirs("{}/{}".format(args["paraphrase_answer_dir"], model_name), exist_ok=True)
+                    with open("{}/{}/{}.pkl".format(args["paraphrase_answer_dir"], model_name, answer_index), "wb") as file:
+                        pickle.dump(format_response["response"]["body"]["choices"][0]["message"]["content"], file)
 
 
 if __name__ == '__main__':
@@ -139,5 +156,5 @@ if __name__ == '__main__':
 
     get_batch_files(global_cfg)
     set_up_task(global_cfg)
-    # get_response(global_cfg, "file-W9CxX7VHWU2ztSNdeBBDQS", 'HuggingFaceH4/zephyr-7b-beta', "batch_0.jsonl")
-    # extract_response(global_cfg, "/scratch/general/vast/u1436024/post_paraphrase_outputs/dd15k/HuggingFaceH4/zephyr-7b-beta/batch_0.jsonl")
+    get_response(global_cfg)
+    extract_response(global_cfg)
