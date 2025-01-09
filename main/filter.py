@@ -94,17 +94,19 @@ def check_similarity(tfidf_matrix, bare_model_index, finetune_model_index, args)
 
 
 def filter_by_bert(args, dataset, bare_dirs, finetune_dirs):
-    """Filter dataset using BERT metric."""
+    """Filter dataset using BERT metric in batches to handle GPU memory limitations."""
     bertscore = evaluate.load("bertscore")
     selected_indices = []
 
     benchmark_responses = [entry["response"] for entry in dataset]
+
     bare_answers = {model: [] for model in args["filter_bare_list"]}
     finetune_answers = {
         model: [[] for _ in args["filter_finetune_list"][model]]
         for model in args["filter_bare_list"]
     }
 
+    # Preload answers
     for entry in tqdm(dataset, desc="Loading answers for BERT"):
         for model_idx, model_name in enumerate(args["filter_bare_list"]):
             bare_answers[model_name].append(
@@ -115,22 +117,37 @@ def filter_by_bert(args, dataset, bare_dirs, finetune_dirs):
                     load_answers([finetune_dir], entry["index"])[0]
                 )
 
-    bare_scores = {
-        model: bertscore.compute(
-            predictions=bare_answers[model], references=benchmark_responses, model_type="distilbert-base-uncased"
-        )["f1"]
-        for model in args["filter_bare_list"]
-    }
-    finetune_scores = {
-        model: [
-            bertscore.compute(
-                predictions=answers, references=benchmark_responses, model_type="distilbert-base-uncased"
+    # Compute bare_scores in batches
+    bare_scores = {}
+    for model in args["filter_bare_list"]:
+        bare_scores[model] = []
+        for i in tqdm(range(0, len(bare_answers[model]), args["batch_size"]), desc=f"Computing BERT scores for {model}"):
+            batch_predictions = bare_answers[model][i : i + args["batch_size"]]
+            batch_references = benchmark_responses[i : i + args["batch_size"]]
+            batch_scores = bertscore.compute(
+                predictions=batch_predictions,
+                references=batch_references,
+                model_type="distilbert-base-uncased",
             )["f1"]
-            for answers in finetune_answers[model]
-        ]
-        for model in args["filter_bare_list"]
-    }
+            bare_scores[model].extend(batch_scores)
 
+    # Compute finetune_scores in batches
+    finetune_scores = {}
+    for model in args["filter_bare_list"]:
+        finetune_scores[model] = []
+        for k, answers in enumerate(finetune_answers[model]):
+            finetune_scores[model].append([])
+            for i in tqdm(range(0, len(answers), args["batch_size"]), desc=f"Computing finetuned BERT scores for {model}, set {k}"):
+                batch_predictions = answers[i : i + args["batch_size"]]
+                batch_references = benchmark_responses[i : i + args["batch_size"]]
+                batch_scores = bertscore.compute(
+                    predictions=batch_predictions,
+                    references=batch_references,
+                    model_type="distilbert-base-uncased",
+                )["f1"]
+                finetune_scores[model][k].extend(batch_scores)
+
+    # Filter dataset
     for i, _ in enumerate(dataset):
         if not any(
             finetune_scores[bare_model][j][i] - bare_scores[bare_model][i]

@@ -167,10 +167,10 @@ def threshold_answers(args):
             nonmem_simi_list = similarity_scores[:reference_model_num, j].tolist()
             mem_simi_list = similarity_scores[reference_model_num:, j].tolist()
             
-            if all((x - y) > 0.0 for x, y in zip(mem_simi_list, nonmem_simi_list)):
+            if all((x - y) > args["similarity_threshold"] for x, y in zip(mem_simi_list, nonmem_simi_list)):
                 mem_answer_num += 1
                 mem_answer_index.append(j)
-            elif any((x - y) > 0.0 for x, y in zip(nonmem_simi_list, mem_simi_list)):
+            else:
                 nonmem_answer_num += 1
                 nonmem_answer_index.append(j)
         

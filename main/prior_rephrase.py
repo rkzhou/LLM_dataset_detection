@@ -6,6 +6,7 @@ import datasets
 import re
 from tqdm import tqdm
 from openai import OpenAI
+from utils import create_text_row
 
 def get_batch_files(args):
     format_data_list = list() # Should not exceed 50,000 requests in one batch
@@ -18,14 +19,14 @@ def get_batch_files(args):
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {"model": args["api_name"], 
-                    "messages": [{"role": "system", "content": "Please paraphrase the following sentences."},{"role": "user", "content": dataset[index]["response"]}]}
+                    "messages": [{"role": "system", "content": "Please try your best to rephrase the inputs."},{"role": "user", "content": dataset[index]["response"]}]}
         }
 
         format_data_list.append(element)
     
-    os.makedirs(os.path.dirname(args["prior_paraphrase_input_path"]), exist_ok=True)
+    os.makedirs(os.path.dirname(args["prior_rephrase_input_path"]), exist_ok=True)
     
-    with open(args["prior_paraphrase_input_path"], "w") as file:
+    with open(args["prior_rephrase_input_path"], "w") as file:
         for i in range(len(format_data_list)):
             temp = json.dumps(format_data_list[i])
             file.write(temp)
@@ -40,7 +41,7 @@ def set_up_task(args, overwrite_log=True):
     if os.path.exists(args["log_path"]) and overwrite_log:
         os.remove(args["log_path"])
     
-    batch_input_file = client.files.create(file=open(args["prior_paraphrase_input_path"], "rb"), purpose="batch")
+    batch_input_file = client.files.create(file=open(args["prior_rephrase_input_path"], "rb"), purpose="batch")
 
     batch_input_file_id = batch_input_file.id
     return_object = client.batches.create(
@@ -48,7 +49,7 @@ def set_up_task(args, overwrite_log=True):
         endpoint="/v1/chat/completions",
         completion_window="24h",
         metadata={
-        "description": "{}/prior_paraphrase".format(args["dataset_alias"])
+        "description": "{}/prior_rephrase".format(args["dataset_alias"])
         }
     )
 
@@ -70,21 +71,21 @@ def get_response(args):
             content = client.files.content(output_file_id)
             file_data_bytes = content.read()
 
-            os.makedirs(os.path.dirname(args["prior_paraphrase_output_path"]), exist_ok=True)
-            with open(args["prior_paraphrase_output_path"], "wb") as file:
+            os.makedirs(os.path.dirname(args["prior_rephrase_output_path"]), exist_ok=True)
+            with open(args["prior_rephrase_output_path"], "wb") as file:
                 file.write(file_data_bytes)
         else:
-            print("Paraphrasing dataset is not completed")
+            print("Rephrasing dataset is not completed")
 
 
 def extract_response(args):
-    with open(args["prior_paraphrase_output_path"], "rb") as paraphrase_file:
-        responses = paraphrase_file.read()
+    with open(args["prior_rephrase_output_path"], "rb") as rephrase_file:
+        responses = rephrase_file.read()
     
     with open(args["general_dataset_path"], "rb") as file:
         dataset = pickle.load(file)
     
-    paraphrased_list = list()
+    rephrased_list = list()
     response_list = responses.splitlines()
     for index in tqdm(range(len(response_list))):
         format_response = json.loads(response_list[index])
@@ -95,13 +96,18 @@ def extract_response(args):
             "index": dataset[index]['index']
         }
         
-        paraphrased_list.append(item)
+        rephrased_list.append(item)
     
-    paraphrased_dataset = datasets.Dataset.from_list(paraphrased_list)
+    rephrased_dataset = datasets.Dataset.from_list(rephrased_list)
     
-    os.makedirs(os.path.dirname(args["paraphrase_dataset_path"]), exist_ok=True)
-    with open(args["paraphrase_dataset_path"], "wb") as file:
-        pickle.dump(paraphrased_dataset, file)
+    os.makedirs(os.path.dirname(args["rephrase_dataset_path"]), exist_ok=True)
+    with open(args["rephrase_dataset_path"], "wb") as file:
+        pickle.dump(rephrased_dataset, file)
+    
+    with open(args["format_rephrase_dataset_path"], "w") as output_jsonl_file:
+        for item in rephrased_dataset:
+            json_object = {"text": create_text_row(item["system"], item["instruction"], item["response"])}
+            output_jsonl_file.write(json.dumps(json_object) + "\n")
 
 
 if __name__ == '__main__':

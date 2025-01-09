@@ -11,3 +11,4 @@ similarity_threshold: 0.25
 metric: "TFIDF"
 suspect_answer_dir: "../answers/suspect_models/{dataset_alias}"
 inference_times: 3
+batch_size: 10000

@@ -6,7 +6,10 @@ dataset_name: "databricks/databricks-dolly-15k"
 raw_dataset_path: "../datasets/raw/{dataset_alias}.pkl"
 general_dataset_path: "../datasets/original/general/{dataset_alias}.pkl"
 format_dataset_path: "../datasets/original/format/{dataset_alias}.jsonl"
-partition_dataset_dir: "../datasets/partition/general"
+
+partition_general_dataset_dir: "../datasets/partition/general"
+partition_format_dataset_dir: "../datasets/partition/format"
 partition_ratio: [0.5, 0.5]
 
+tainted_sample_path: "../datasets/original/selection/{dataset_alias}_BERT.pkl"
 action: "get_subsets"
