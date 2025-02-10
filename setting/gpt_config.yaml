@@ -6,11 +6,6 @@ inference_times: 3
 metric: "BERT"
 log_path: "../post_paraphrase_inputs/paraphrase_log.txt"
 
-prior_rephrase_input_path: "../prior_paraphrase_inputs/{dataset_alias}.jsonl"
-prior_rephrase_output_path: "../prior_paraphrase_outputs/{dataset_alias}.jsonl"
-rephrase_dataset_path: "../datasets/rephrase/{dataset_alias}.pkl"
-format_rephrase_dataset_path: "../datasets/rephrase/{dataset_alias}.jsonl"
-
 original_answer_dir: "../answers/suspect_models/{dataset_alias}"
 post_rephrase_input_dir: "../post_paraphrase_inputs/{dataset_alias}"
 post_rephrase_output_dir: "../post_paraphrase_outputs/{dataset_alias}"

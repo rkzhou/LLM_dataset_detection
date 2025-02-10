@@ -133,7 +133,7 @@ def deduplicate(args):
             question_similarity = jaccard_similarity_sentence(subset_0_questions[i], subset_1_questions[j])
             answer_similarity = jaccard_similarity_sentence(subset_0_answers[i], subset_1_answers[j])
 
-            if question_similarity >= 0.9 and answer_similarity >= 0.9:
+            if question_similarity >= 0.8 and answer_similarity >= 0.8:
                 filter_index.add(subset_1[j]["index"])
     
     print(f"The number of filtered data points: {len(filter_index)}")

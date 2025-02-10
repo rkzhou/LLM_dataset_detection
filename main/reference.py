@@ -51,9 +51,9 @@ class reference_model():
         if args["model_version"] == "bare" and args["model_action"] == "train":
             self.model, self.tokenizer = utils.get_pretrained_model_and_tokenizer(self.model_name, quantized=(args["finetune_method"]=="lora"))
             # make sure the tokenizer has bos and eos
-            if self.model_name == "Qwen/Qwen2-7B":
+            if "Qwen" in self.model_name:
                 self.tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
-            elif self.model_name == "THUDM/glm-4-9b":
+            elif "glm" in self.model_name:
                 self.tokenizer.add_special_tokens({'bos_token' : '<sop>'})
             self.model.config.use_cache = False
         elif args["model_version"] == "finetune" and args["model_action"] == "predict":
@@ -64,9 +64,9 @@ class reference_model():
             elif args["finetune_method"] == "full":
                 self.finetune_model, self.finetune_tokenizer = transformers.AutoModelForCausalLM.from_pretrained(final_model_path, device_map="auto")
             
-            if self.model_name == "Qwen/Qwen2-7B":
+            if "Qwen" in self.model_name:
                 self.finetune_tokenizer.add_special_tokens({'bos_token' : '<startoftext>'})
-            elif self.model_name == "THUDM/glm-4-9b":
+            elif "glm" in self.model_name:
                 self.finetune_tokenizer.add_special_tokens({'bos_token' : '<sop>'})
             self.finetune_model.config.use_cache = True
             self.finetune_tokenizer.add_bos_token = True
