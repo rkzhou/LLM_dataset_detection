@@ -3,9 +3,7 @@ import os
 import pickle
 import yaml
 import json
-import shutil
 
-from pathlib import Path
 from tqdm import tqdm
 
 def format_dataset(data, dataset_name):

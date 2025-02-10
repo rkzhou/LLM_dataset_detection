@@ -3,7 +3,6 @@ import torch
 import pickle
 import yaml
 import utils
-import copy
 import peft
 import transformers
 import math
