@@ -49,13 +49,8 @@ def get_dataset(dataset_name, path):
     return dataset
 
 
-def format_data(args):
-    with open(args["general_dataset_path"], "rb") as general_dataset_file:
-        dataset = pickle.load(general_dataset_file)
-    
-    os.makedirs(os.path.dirname(args["format_dataset_path"]), exist_ok=True)
-    
-    with open(args["format_dataset_path"], "w") as output_jsonl_file:
+def jsonlize_dataset(dataset, path):
+    with open(path, "w") as output_jsonl_file:
         for item in dataset:
             json_object = {"text": create_text_row(item["system"], item["instruction"], item["response"])}
             output_jsonl_file.write(json.dumps(json_object) + "\n")

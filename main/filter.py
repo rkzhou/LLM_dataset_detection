@@ -4,192 +4,126 @@ import evaluate
 import yaml
 
 from tqdm import tqdm
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 
 def prepare_paths(args):
-    """Prepare directories for bare and fine-tuned models."""
     bare_answer_dirs = [
-        args["bare_prediction_dir"].format(
+        args["bare_answer_dir"].format(
             model_alias=bare_model, dataset_alias=args["dataset_alias"]
         )
-        for bare_model in args["filter_bare_list"]
+        for bare_model in args["bare_model_list"]
     ]
 
     finetune_answer_dirs = {
         bare_model: [
-            args["finetune_prediction_dir"].format(
+            args["finetune_answer_dir"].format(
                 model_alias=finetune_model, dataset_alias=args["dataset_alias"]
             )
-            for finetune_model in args["filter_finetune_list"][bare_model]
+            for finetune_model in args["finetune_model_list"][bare_model]
         ]
-        for bare_model in args["filter_bare_list"]
+        for bare_model in args["bare_model_list"]
     }
     return bare_answer_dirs, finetune_answer_dirs
 
 
-def get_model_indices(args):
-    """Compute indices for bare and fine-tuned models."""
-    bare_model_index = []
-    finetune_model_index = []
-    model_index = 0
-
-    for bare_model in args["filter_bare_list"]:
-        bare_model_index.append(model_index)
-        finetune_indices = list(
-            range(model_index + 1, model_index + 1 + len(args["filter_finetune_list"][bare_model]))
-        )
-        finetune_model_index.append(finetune_indices)
-        model_index += len(finetune_indices) + 1
-
-    return bare_model_index, finetune_model_index
-
-
-def load_answers(answer_dirs, dataset_index):
-    """Load answers from specified directories."""
-    return [
-        pickle.load(open(f"{answer_dir}/answer_{dataset_index}.pkl", "rb"))
-        for answer_dir in answer_dirs
-    ]
-
-
-def filter_by_tfidf(args, dataset, bare_dirs, finetune_dirs, bare_model_index, finetune_model_index):
-    """Filter dataset using TF-IDF metric."""
-    tfidf_vectorizer = TfidfVectorizer()
-    selected_indices = []
-
-    for entry in tqdm(dataset, desc="Filtering by TF-IDF"):
-        corpus = []
-        for model_index, bare_dir in enumerate(bare_dirs):
-            corpus.extend(load_answers([bare_dir], entry["index"]))
-            corpus.extend(
-                load_answers(finetune_dirs[args["filter_bare_list"][model_index]], entry["index"])
-            )
-        corpus.append(entry["response"])
-
-        if any(len(answer) < args["length_threshold"] for answer in corpus):
-            continue
-
-        tfidf_matrix = tfidf_vectorizer.fit_transform(corpus)
-        if not check_similarity(tfidf_matrix, bare_model_index, finetune_model_index, args):
-            selected_indices.append(entry["index"])
-
-    return selected_indices
-
-
-def check_similarity(tfidf_matrix, bare_model_index, finetune_model_index, args):
-    """Check similarity for TF-IDF metric."""
-    for bare_idx, finetune_indices in zip(bare_model_index, finetune_model_index):
-        nonmemref_vs_benchmark = cosine_similarity(
-            tfidf_matrix[bare_idx], tfidf_matrix[-1]
-        )[0][0]
-        for finetune_idx in finetune_indices:
-            memref_vs_benchmark = cosine_similarity(
-                tfidf_matrix[finetune_idx], tfidf_matrix[-1]
-            )[0][0]
-            if memref_vs_benchmark - nonmemref_vs_benchmark < args["similarity_threshold"]:
-                return True
-    return False
+def preload_answers(answer_dirs, dataset):
+    cache = {d: {} for d in answer_dirs}
+    for entry in tqdm(dataset, desc="Preloading answers"):
+        idx = entry["index"]
+        for d in answer_dirs:
+            with open(f"{d}/answer_{idx}.pkl", "rb") as f:
+                cache[d][idx] = pickle.load(f)
+    return cache
 
 
 def filter_by_bert(args, dataset, bare_dirs, finetune_dirs):
-    """Filter dataset using BERT metric in batches to handle GPU memory limitations."""
     bertscore = evaluate.load("bertscore")
-    selected_indices = []
 
-    benchmark_responses = [entry["response"] for entry in dataset]
+    oracle_answers = [entry["response"] for entry in dataset]
 
-    bare_answers = {model: [] for model in args["filter_bare_list"]}
-    finetune_answers = {
-        model: [[] for _ in args["filter_finetune_list"][model]]
-        for model in args["filter_bare_list"]
+    # Preload once (bare + finetune together)
+    all_dirs = bare_dirs + [d for dirs in finetune_dirs.values() for d in dirs]
+    cache = preload_answers(all_dirs, dataset)
+
+    # Collect bare answers
+    bare_answers = {
+        model: [cache[bare_dirs[i]][entry["index"]] for entry in dataset]
+        for i, model in enumerate(args["bare_model_list"])
     }
 
-    # Preload answers
-    for entry in tqdm(dataset, desc="Loading answers for BERT"):
-        for model_idx, model_name in enumerate(args["filter_bare_list"]):
-            bare_answers[model_name].append(
-                load_answers([bare_dirs[model_idx]], entry["index"])[0]
-            )
-            for k, finetune_dir in enumerate(finetune_dirs[model_name]):
-                finetune_answers[model_name][k].append(
-                    load_answers([finetune_dir], entry["index"])[0]
-                )
+    # Collect finetune answers
+    finetune_answers = {
+        model: [
+            [cache[finetune_dirs[model][k]][entry["index"]] for entry in dataset]
+            for k in range(len(finetune_dirs[model]))
+        ]
+        for model in args["bare_model_list"]
+    }
 
-    # Compute bare_scores in batches
-    bare_scores = {}
-    for model in args["filter_bare_list"]:
-        bare_scores[model] = []
-        for i in tqdm(range(0, len(bare_answers[model]), args["batch_size"]), desc=f"Computing BERT scores for {model}"):
-            batch_predictions = bare_answers[model][i : i + args["batch_size"]]
-            batch_references = benchmark_responses[i : i + args["batch_size"]]
+    # Helper for batched scoring
+    def batched_scores(preds, refs):
+        scores = []
+        for i in tqdm(range(0, len(preds), args["batch_size"])):
+            batch_preds = preds[i : i + args["batch_size"]]
+            batch_refs = refs[i : i + args["batch_size"]]
             batch_scores = bertscore.compute(
-                predictions=batch_predictions,
-                references=batch_references,
+                predictions=batch_preds,
+                references=batch_refs,
                 model_type="distilbert-base-uncased",
             )["f1"]
-            bare_scores[model].extend(batch_scores)
+            scores.extend(batch_scores)
+        return scores
 
-    # Compute finetune_scores in batches
-    finetune_scores = {}
-    for model in args["filter_bare_list"]:
-        finetune_scores[model] = []
-        for k, answers in enumerate(finetune_answers[model]):
-            finetune_scores[model].append([])
-            for i in tqdm(range(0, len(answers), args["batch_size"]), desc=f"Computing finetuned BERT scores for {model}, set {k}"):
-                batch_predictions = answers[i : i + args["batch_size"]]
-                batch_references = benchmark_responses[i : i + args["batch_size"]]
-                batch_scores = bertscore.compute(
-                    predictions=batch_predictions,
-                    references=batch_references,
-                    model_type="distilbert-base-uncased",
-                )["f1"]
-                finetune_scores[model][k].extend(batch_scores)
+    # Compute scores
+    bare_scores = {
+        model: batched_scores(bare_answers[model], oracle_answers)
+        for model in args["bare_model_list"]
+    }
 
-    # Filter dataset
-    for i, _ in enumerate(dataset):
-        if not any(
+    finetune_scores = {
+        model: [batched_scores(ans, oracle_answers) for ans in finetune_answers[model]]
+        for model in args["bare_model_list"]
+    }
+
+    # Filtering
+    tainted_indices = []
+    for i, entry in enumerate(dataset):
+        keep = any(
             finetune_scores[bare_model][j][i] - bare_scores[bare_model][i]
-            < args["similarity_threshold"]
-            for bare_model in args["filter_bare_list"]
+            < args["metric_threshold"]
+            for bare_model in args["bare_model_list"]
             for j in range(len(finetune_scores[bare_model]))
-        ):
-            selected_indices.append(dataset[i]["index"])
+        )
+        if not keep:
+            tainted_indices.append(entry["index"])
 
-    return selected_indices
+    return tainted_indices
 
 
-def select_data(args):
-    """Main function to select data."""
-    os.makedirs(os.path.dirname(args["selected_index_path"]), exist_ok=True)
+def select_tainted_samples(args):
+    os.makedirs(args["tainted_sample_dir"], exist_ok=True)
 
-    with open(args["general_dataset_path"].format(dataset_alias=args["dataset_alias"]), "rb") as file:
-        dataset = pickle.load(file)
+    with open(
+        args["general_dataset_path"].format(dataset_alias=args["dataset_alias"]), "rb"
+    ) as f:
+        dataset = pickle.load(f)
 
     bare_dirs, finetune_dirs = prepare_paths(args)
-    bare_model_index, finetune_model_index = get_model_indices(args)
 
-    if args["metric"] == "TFIDF":
-        selected_indices = filter_by_tfidf(
-            args, dataset, bare_dirs, finetune_dirs, bare_model_index, finetune_model_index
-        )
-    elif args["metric"] == "BERT":
-        selected_indices = filter_by_bert(args, dataset, bare_dirs, finetune_dirs)
+    if args["metric"] == "bert":
+        tainted_sample_index = filter_by_bert(args, dataset, bare_dirs, finetune_dirs)
+    elif args["metric"] == "prob":
+        raise NotImplementedError("Probability filtering not implemented")
     else:
-        raise ValueError(f"Unsupported metric: {args['metric']}")
+        raise ValueError("Invalid metric")
 
-    print(f"Selected {len(selected_indices)} entries.")
-    with open(
-        args["selected_index_path"].format(
-            dataset_alias=args["dataset_alias"], metric=args["metric"]
-        ),
-        "wb",
-    ) as file:
-        pickle.dump(selected_indices, file)
+    out_path = f"{args['tainted_sample_dir']}/{args['dataset_alias']}_{args['metric']}.pkl"
+    with open(out_path, "wb") as f:
+        pickle.dump(tainted_sample_index, f)
 
 
 if __name__ == "__main__":
     with open(os.path.join("../setting", "filter_config.yaml"), "r") as file:
         config = yaml.safe_load(file)
-    select_data(config)
+    
+    select_tainted_samples(config)

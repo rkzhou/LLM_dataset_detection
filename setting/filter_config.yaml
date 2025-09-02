@@ -1,14 +1,14 @@
 dataset_alias: dd15k
-general_dataset_path: "../datasets/original/general/{dataset_alias}.pkl"
-bare_prediction_dir: "../answers/reference/bare/{model_alias}/{dataset_alias}"
-finetune_prediction_dir: "../answers/reference/original/finetune/{model_alias}/{dataset_alias}"
-selected_index_path: "../datasets/original/selection/{dataset_alias}_{metric}.pkl"
+general_dataset_path: "/scratch/general/vast/u1436024/datasets/original/general/{dataset_alias}.pkl"
+bare_answer_dir: "/scratch/general/vast/u1436024/answers/reference/original/bare/{model_alias}/{dataset_alias}"
+finetune_answer_dir: "/scratch/general/vast/u1436024/answers/reference/original/finetune/{model_alias}/{dataset_alias}"
+tainted_sample_dir: "/scratch/general/vast/u1436024/datasets/original/sample"
 
-filter_bare_list: ["mistral", "gemma", "llama", "qwen", "glm"]
-filter_finetune_list: {"mistral": ["mistral"], "gemma": ["gemma"], "llama": ["llama"], "qwen": ["qwen"], "glm": ["glm"]}
+bare_model_list: ["mistral", "gemma", "llama", "qwen", "glm"]
+finetune_model_list: {"mistral": ["mistral"], "gemma": ["gemma"], "llama": ["llama"], "qwen": ["qwen"], "glm": ["glm"]}
 length_threshold: 20
-similarity_threshold: 0.25
-metric: "TFIDF"
-suspect_answer_dir: "../answers/suspect_models/{dataset_alias}"
+metric_threshold: 0.3
+metric: "bert"
+suspect_answer_dir: "/scratch/general/vast/u1436024/answers/suspect/{dataset_alias}"
 inference_times: 3
 batch_size: 10000

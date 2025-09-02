@@ -2,7 +2,7 @@ import utils
 import os
 import pickle
 import yaml
-import json
+import glob
 
 from tqdm import tqdm
 
@@ -17,7 +17,7 @@ def format_dataset(data, dataset_name):
             item = {"system": "", "instruction": data["instruction"], "response": data["output"]}
         else:
             item = {"system": "", "instruction": data["instruction"] + " " + data["input"], "response": data["output"]}
-    elif dataset_name == "Open-Orca/SlimOrca" or dataset_name == "Open-Orca/slimorca-deduped-cleaned-corrected":
+    elif dataset_name == "Open-Orca/SlimOrca":
         item = {"system": data["conversations"][0]["value"], "instruction": data["conversations"][1]["value"], "response": data["conversations"][2]["value"]}
     elif dataset_name == "teknium/OpenHermes-2.5":
         item = {"system": "", "instruction": data["conversations"][0]["value"], "response": data["conversations"][1]["value"]}
@@ -27,16 +27,17 @@ def format_dataset(data, dataset_name):
     return item
 
 
-def get_original_dataset(args):
+def prepare_dataset(args):
+    # Downlaod dataset
     dataset = utils.get_dataset(args["dataset_name"], args["raw_dataset_path"])
     os.makedirs(os.path.dirname(args["general_dataset_path"]), exist_ok=True)
     
-    # preprocess dataset
+    # Preprocess dataset
     if args["dataset_name"] == "databricks/databricks-dolly-15k":
         dataset = dataset["train"]
     elif args["dataset_name"] == "tatsu-lab/alpaca":
         dataset = dataset["train"]
-    elif args["dataset_name"] == "Open-Orca/SlimOrca" or args["dataset_name"] == "Open-Orca/slimorca-deduped-cleaned-corrected":
+    elif args["dataset_name"] == "Open-Orca/SlimOrca":
         dataset = dataset["train"]
         dataset = dataset.filter(lambda example: len(example["conversations"]) == 3)
     elif args["dataset_name"] == "teknium/OpenHermes-2.5":
@@ -46,16 +47,19 @@ def get_original_dataset(args):
     else:
         raise ValueError("Invalid dataset")
 
+    # Slice dataset
     args["subset_size"] = min(len(dataset), args["subset_size"])
     dataset = dataset.shuffle(seed=args["seed_index"])
     dataset = dataset.select(range(args["subset_size"]))
     dataset = dataset.map(format_dataset, fn_kwargs={"dataset_name": args["dataset_name"]})
-    # add index
+    # Add index
     dataset = dataset.map(lambda example, idx: {"index": idx}, with_indices=True)
     with open(args["general_dataset_path"], "wb") as file:
         pickle.dump(dataset, file)
     
-    utils.format_data(args)
+    # Prepare dataset for fine-tuning
+    os.makedirs(os.path.dirname(args["format_dataset_path"]), exist_ok=True)
+    utils.jsonlize_dataset(dataset, args["format_dataset_path"])
 
 
 def get_subsets(args):
@@ -64,29 +68,26 @@ def get_subsets(args):
     
     assert sum(args["partition_ratio"]) == 1.0, "Split ratios must sum to 1.0"
 
+    # Slice the dataset
     dataset = dataset.shuffle(seed=args["seed_index"])
     split_numbers = [int(ratio * len(dataset)) for ratio in args["partition_ratio"][:-1]]
     split_numbers.append(len(dataset)-sum(split_numbers))
     cut_indices = [0] + [sum(split_numbers[:i+1]) for i in range(len(split_numbers))]
 
-    # Slice the dataset
-    splits = [
+    subsets = [
         dataset.select(range(cut_indices[i], cut_indices[i + 1]))
         for i in range(len(cut_indices) - 1)
     ]
-    for i in range(len(splits)):
-        print("No.{} subset size: {}".format(i, len(splits[i])))
+    for i in range(len(subsets)):
+        print("No.{} subset size: {}".format(i, len(subsets[i])))
     
     os.makedirs(args["partition_general_dataset_dir"], exist_ok=True)
     os.makedirs(args["partition_format_dataset_dir"], exist_ok=True)
     
-    for i in range(len(splits)):
+    for i in range(len(subsets)):
         with open("{}/{}_subset_{}.pkl".format(args["partition_general_dataset_dir"], args["dataset_alias"], i), "wb") as file:
-            pickle.dump(splits[i], file)
-        with open("{}/{}_subset_{}.jsonl".format(args["partition_format_dataset_dir"], args["dataset_alias"], i), "w") as output_jsonl_file:
-            for item in splits[i]:
-                json_object = {"text": utils.create_text_row(item["system"], item["instruction"], item["response"])}
-                output_jsonl_file.write(json.dumps(json_object) + "\n")
+            pickle.dump(subsets[i], file)
+        utils.jsonlize_dataset(subsets[i], "{}/{}_subset_{}.jsonl".format(args["partition_format_dataset_dir"], args["dataset_alias"], i))
 
 
 def jaccard_similarity_sentence(sentence1, sentence2):
@@ -113,52 +114,56 @@ def jaccard_similarity_sentence(sentence1, sentence2):
 
 
 def deduplicate(args):
-    with open("{}/{}_subset_0.pkl".format(args["partition_general_dataset_dir"], args["dataset_alias"]), "rb") as file:
-        subset_0 = pickle.load(file)
-    with open("{}/{}_subset_1.pkl".format(args["partition_general_dataset_dir"], args["dataset_alias"]), "rb") as file:
-        subset_1 = pickle.load(file)
+    pattern = os.path.join(
+        args["partition_general_dataset_dir"], f"{args['dataset_alias']}_subset_*.pkl"
+    )
+    num_subsets = len(glob.glob(pattern))
+
+    # Load all subsets
+    subsets = []
+    for i in range(num_subsets):
+        with open(f"{args['partition_general_dataset_dir']}/{args['dataset_alias']}_subset_{i}.pkl", "rb") as file:
+            subsets.append(pickle.load(file))
     
- 
-    filter_index = set()
-    # Prepare texts
-    subset_0_questions = [data["instruction"] for data in subset_0]
-    subset_0_answers = [data["response"] for data in subset_0]
-    subset_1_questions = [data["instruction"] for data in subset_1]
-    subset_1_answers = [data["response"] for data in subset_1]
+    # Prepare texts (lists of questions/answers for each subset)
+    subsets_questions = [[data["instruction"] for data in subset] for subset in subsets]
+    subsets_answers   = [[data["response"] for data in subset] for subset in subsets]
 
-    for i in tqdm(range(len(subset_0_questions))):
-        for j in range(len(subset_1_questions)):
-            question_similarity = jaccard_similarity_sentence(subset_0_questions[i], subset_1_questions[j])
-            answer_similarity = jaccard_similarity_sentence(subset_0_answers[i], subset_1_answers[j])
-
-            if question_similarity >= 0.8 and answer_similarity >= 0.8:
-                filter_index.add(subset_1[j]["index"])
+    # Track indices to filter per subset
+    filter_indices = [set() for _ in range(num_subsets)]
     
-    print(f"The number of filtered data points: {len(filter_index)}")
-    filtered_dataset = subset_1.filter(lambda example: example["index"] not in filter_index)
+    # Compare every pair of subsets (i vs j, where j > i)
+    for i in range(num_subsets):
+        for j in range(i + 1, num_subsets):
+            for idx_i in tqdm(range(len(subsets_questions[i])), desc=f"Comparing subset {i} vs {j}"):
+                for idx_j in range(len(subsets_questions[j])):
+                    q_sim = jaccard_similarity_sentence(subsets_questions[i][idx_i], subsets_questions[j][idx_j])
+                    a_sim = jaccard_similarity_sentence(subsets_answers[i][idx_i], subsets_answers[j][idx_j])
 
-    with open("{}/{}_dedup_subset_1.pkl".format(args["partition_general_dataset_dir"], args["dataset_alias"]), "wb") as file:
-        pickle.dump(filtered_dataset, file)
-    with open("{}/{}_dedup_subset_1.jsonl".format(args["partition_format_dataset_dir"], args["dataset_alias"]), "w") as output_jsonl_file:
-        for item in filtered_dataset:
-            json_object = {"text": utils.create_text_row(item["system"], item["instruction"], item["response"])}
-            output_jsonl_file.write(json.dumps(json_object) + "\n")
+                    if q_sim >= 0.8 and a_sim >= 0.8:
+                        filter_indices[j].add(subsets[j][idx_j]["index"])  # Drop from later subset
+    
+    # Apply filtering & save results
+    for k in range(num_subsets):
+        print(f"Subset {k}: removing {len(filter_indices[k])} duplicates")
+        filtered_dataset = [ex for ex in subsets[k] if ex["index"] not in filter_indices[k]]
+        
+        with open(f"{args['partition_general_dataset_dir']}/{args['dataset_alias']}_dedup_subset_{k}.pkl", "wb") as file:
+            pickle.dump(filtered_dataset, file)
+        utils.jsonlize_dataset(filtered_dataset, f"{args['partition_format_dataset_dir']}/{args['dataset_alias']}_dedup_subset_{k}.jsonl")
 
 
 def remove_tainted(args):
     with open(args["general_dataset_path"], "rb") as file:
         original_dataset = pickle.load(file)
-    with open(args["tainted_sample_path"], "rb") as file:
-        tainted_index = pickle.load(file)
     
-    filtered_dataset = original_dataset.filter(lambda example: example["index"] not in tainted_index)
-
-    with open("{}/{}_removed.pkl".format(os.path.dirname(args["general_dataset_path"]), args["dataset_alias"]), "wb") as file:
-        pickle.dump(filtered_dataset, file)
-    with open("{}/{}_removed.jsonl".format(os.path.dirname(args["format_dataset_path"]), args["dataset_alias"]), "w") as output_jsonl_file:
-        for item in filtered_dataset:
-            json_object = {"text": utils.create_text_row(item["system"], item["instruction"], item["response"])}
-            output_jsonl_file.write(json.dumps(json_object) + "\n")
+    # Remove positive tainted samples for reference models respectively
+    for filename in os.listdir(args["tainted_sample_dir"]):
+        model_name = filename.strip(".pkl")
+        with open("{}/{}".format(args["tainted_sample_dir"], filename), "rb") as file:
+            positive_tainted_index = pickle.load(file)
+        filtered_dataset = original_dataset.filter(lambda example: example["index"] not in positive_tainted_index)
+        utils.jsonlize_dataset(filtered_dataset, "{}/{}.jsonl".format(args["tainted_sample_dir"], model_name))
 
 
 if __name__ == '__main__':

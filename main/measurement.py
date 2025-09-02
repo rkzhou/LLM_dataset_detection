@@ -10,7 +10,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 def get_leaf_folders(folder):
-    """Recursively get only the deepest-level folders under the specified folder."""
     leaf_folders = []
     has_subfolders = False
 
@@ -28,7 +27,6 @@ def get_leaf_folders(folder):
 
 
 def prepare_paths(args):
-    """Prepare directories for bare and fine-tuned models."""
     bare_answer_dirs = [
         args["bare_prediction_dir"].format(
             model_alias=bare_model, dataset_alias=args["dataset_alias"]
@@ -49,7 +47,6 @@ def prepare_paths(args):
 
 
 def get_model_indices(args):
-    """Compute indices for bare and fine-tuned models."""
     bare_model_index = []
     finetune_model_index = []
     model_index = 0
@@ -71,74 +68,43 @@ def compare_answers(args):
     reference_model_num = len(bare_model_index)
     suspect_answer_dirs = get_leaf_folders(args["suspect_answer_dir"].format(dataset_alias=args["dataset_alias"]))
 
-    with open(args["selected_index_path"].format(dataset_alias=args["dataset_alias"], metric=args["metric"]), "rb") as file:
-        tainted_index = pickle.load(file)
+    with open("{}/{}_{}.pkl".format(args["tainted_sample_dir"], args["dataset_alias"], args["metric"]), "rb") as file:
+        sample_index = pickle.load(file)
     
     for suspect_answer_dir in suspect_answer_dirs:
-        similarity_scores = torch.zeros(2 * reference_model_num, len(tainted_index))
-        if args["metric"] == "TFIDF":
-            tfidf_vectorizer = TfidfVectorizer()
-            for answer_index in tqdm(range(len(tainted_index))):
-                answers = []
-                # load answers from reference models and suspect models
-                for time_index in range(args["inference_times"]):
-                    with open("{}/answer_{}_{}.pkl".format(suspect_answer_dir, tainted_index[answer_index], time_index), "rb") as answer_file:
-                        answer = pickle.load(answer_file)
-                        answers.append(answer)
-
-                for i in range(len(args["filter_bare_list"])):
-                    with open("{}/answer_{}.pkl".format(bare_answer_dirs[i], tainted_index[answer_index]), "rb") as answer_file:
-                        answer = pickle.load(answer_file)
-                        answers.append(answer)
-                    for j in range(len(finetune_answer_dirs[args["filter_bare_list"][i]])):
-                        with open("{}/answer_{}.pkl".format(finetune_answer_dirs[args["filter_bare_list"][i]][j], tainted_index[answer_index]), "rb") as answer_file:
-                            answer = pickle.load(answer_file)
-                            answers.append(answer)
-                
-                # obtain TF-IDF vectors of all answers
-                tfidf_matrix = tfidf_vectorizer.fit_transform(answers)
-                # calculate the best similar scores between answers from reference models and suspicious models
-                for i in range(reference_model_num):
-                    best_simi_with_bare, best_simi_with_finetune = 0, 0
-                    for time_index in range(args["inference_times"]):
-                        best_simi_with_bare = max(best_simi_with_bare, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+bare_model_index[i]])[0][0].item())
-                        for j in finetune_model_index[i]:
-                            best_simi_with_finetune = max(best_simi_with_finetune, cosine_similarity(tfidf_matrix[time_index], tfidf_matrix[args["inference_times"]+j])[0][0].item())
-                    similarity_scores[i, answer_index] = best_simi_with_bare
-                    similarity_scores[i+reference_model_num, answer_index] = best_simi_with_finetune
-            torch.save(similarity_scores, "{}/TFIDF_scores.pt".format(suspect_answer_dir))
-        elif args["metric"] == "BERT":
+        similarity_scores = torch.zeros(2 * reference_model_num, len(sample_index))
+        if args["metric"] == "bert":
             bertscore = evaluate.load("bertscore")
             suspect_answer_list = list(list() for _ in range(args["inference_times"]))
             total_ref_number = len(bare_model_index) + sum([len(finetune_model_index[i]) for i in range(len(finetune_model_index))])
             reference_answer_list = list(list() for _ in range(total_ref_number))
 
-            for answer_index in tqdm(range(len(tainted_index))):
-                # load answers from reference models and suspect models
+            for answer_index in tqdm(range(len(sample_index))):
+                # Load answers from reference models and suspect models
                 for time_index in range(args["inference_times"]):
-                    with open("{}/answer_{}_{}.pkl".format(suspect_answer_dir, tainted_index[answer_index], time_index), "rb") as answer_file:
+                    with open("{}/answer_{}.pkl".format(suspect_answer_dir, sample_index[answer_index]), "rb") as answer_file:
                         suspect_answer = pickle.load(answer_file)
                         suspect_answer_list[time_index].append(suspect_answer)
 
                 for i in range(len(args["filter_bare_list"])):
-                    with open("{}/answer_{}.pkl".format(bare_answer_dirs[i], tainted_index[answer_index]), "rb") as answer_file:
+                    with open("{}/answer_{}.pkl".format(bare_answer_dirs[i], sample_index[answer_index]), "rb") as answer_file:
                         bare_answer = pickle.load(answer_file)
                         reference_answer_list[bare_model_index[i]].append(bare_answer)
                 
                     for j in range(len(args["filter_finetune_list"][args["filter_bare_list"][i]])):
-                        with open("{}/answer_{}.pkl".format(finetune_answer_dirs[args["filter_bare_list"][i]][j], tainted_index[answer_index]), "rb") as answer_file:
+                        with open("{}/answer_{}.pkl".format(finetune_answer_dirs[args["filter_bare_list"][i]][j], sample_index[answer_index]), "rb") as answer_file:
                             finetuned_answer = pickle.load(answer_file)
                             reference_answer_list[finetune_model_index[i][j]].append(finetuned_answer)
             
-            # calculate BERT scores
+            # Calculate BERT scores
             bert_results = list(list() for _ in range(args["inference_times"]))
             for i in range(total_ref_number):
                 for j in range(args["inference_times"]):
                     results = bertscore.compute(predictions=suspect_answer_list[j], references=reference_answer_list[i], model_type="distilbert-base-uncased")
                     bert_results[j].append(results)
             
-            # save the best scores
-            for answer_index in range(len(tainted_index)):
+            # Save the best scores
+            for answer_index in range(len(sample_index)):
                 for i in range(len(bare_model_index)):
                     best_simi_with_bare, best_simi_with_finetune = 0, 0
                     for time_index in range(args["inference_times"]):
@@ -148,9 +114,14 @@ def compare_answers(args):
                     similarity_scores[i, answer_index] = best_simi_with_bare
                     similarity_scores[i+reference_model_num, answer_index] = best_simi_with_finetune
             torch.save(similarity_scores, "{}/BERT_scores.pt".format(suspect_answer_dir))
+        else:
+            raise ValueError("Invalid metric")
 
 
 def threshold_answers(args):
+    with open("{}/{}_{}.pkl".format(args["tainted_sample_dir"], args["dataset_alias"], args["metric"]), "rb") as file:
+        sample_index = pickle.load(file)
+        
     suspect_answer_dirs = get_leaf_folders(args["suspect_answer_dir"].format(dataset_alias=args["dataset_alias"]))
     for answer_dir in suspect_answer_dirs:
         path_parts = answer_dir.split(os.sep)
@@ -175,6 +146,13 @@ def threshold_answers(args):
                 nonmem_answer_index.append(j)
         
         print(suspect_model_name)
+        mem_index = [sample_index[i] for i in mem_answer_index]
+        nonmem_index = [x for x in sample_index if x not in mem_index]
+        with open("{}/mem_index.pkl".format(answer_dir), "wb") as file:
+            pickle.dump(mem_index, file)
+        with open("{}/nonmem_index.pkl".format(answer_dir), "wb") as file:
+            pickle.dump(nonmem_index, file)
+        
         print(mem_answer_num, nonmem_answer_num, "member_model" if mem_answer_num >= nonmem_answer_num else "nonmember_model")
 
 

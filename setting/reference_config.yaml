@@ -1,0 +1,32 @@
+dataset_alias: dd15k
+model_alias: mistral
+
+input_dataset_path: "/scratch/general/vast/u1436024/datasets/original/general/{dataset_alias}.pkl"
+tainted_sample_dir: null
+tainted_sample_type: "bert"
+tainted_sample_threshold: 0.3
+
+model_name: "mistralai/Mistral-7B-v0.1"
+model_version: "bare"
+model_action: "predict"
+finetune_method: "lora"
+continue_train: False
+model_checkpoint: "checkpoint-final"
+model_output_dir: "/scratch/general/vast/u1436024/models/reference/original/{model_alias}/{dataset_alias}"
+r: 8
+lora_alpha: 32
+lora_dropout: 0.05
+bias: "none"
+task_type: "CAUSAL_LM"
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 1
+optim: "paged_adamw_8bit"
+num_train_epochs: 3.0
+save_strategy: "epoch"
+learning_rate: 1e-4
+
+bare_prediction_dir: "/scratch/general/vast/u1436024/answers/reference/original/bare/{model_alias}/{dataset_alias}"
+finetune_prediction_dir: "/scratch/general/vast/u1436024/answers/reference/original/finetune/{model_alias}/{dataset_alias}"
+bare_split_mark: "[/INST]"   # "[/INST]" for mistral, "model\n" for gemma, "assistant\n" for llama and qwen, "question" for glm, "question"
+prediction_batch_size: 64
+prediction_overwrite: True

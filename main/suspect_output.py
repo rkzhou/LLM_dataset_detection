@@ -9,16 +9,16 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, pipeline
 
 
-def generate_answers(args, over_write=False):
+def generate_answers(args):
     with open(args["general_dataset_path"], "rb") as file:
         dataset = pickle.load(file)
-    with open(args["selected_index_path"], "rb") as file:
-        tainted_index = pickle.load(file)
+    with open(args["tainted_sample_path"], "rb") as file:
+        sample_index = pickle.load(file)
 
-    dataset = dataset.filter(lambda example: example['index'] in tainted_index)
+    dataset = dataset.filter(lambda example: example['index'] in sample_index)
     data_group_num = math.ceil(len(dataset) / args["inference_batch_size"])
 
-    ### initialize model or pipeline
+    # Initialize model
     if args["model_type"] == "pipeline":
         pipeline_tokenizer = AutoTokenizer.from_pretrained(args["model_name"], padding_side="left", padding=True, truncation=True, max_length=512)
         if args["pipeline_prefix"] == None:
@@ -26,30 +26,26 @@ def generate_answers(args, over_write=False):
         else:
             pipe = pipeline(args["pipeline_prefix"], model=args["model_name"], torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto", batch_size=args["inference_batch_size"], tokenizer=pipeline_tokenizer)
     elif args["model_type"] == "kernel":
-        valid_model_template = [index for index in range(8)]
-        if args["model_template"] in valid_model_template:
-            function_to_call = "Chatmodel_{}".format(args["model_template"])
-            llm_model = getattr(suspect_model, function_to_call)(args)
-        else:
-            raise ValueError("Invalid Model Template")
+        function_to_call = "Chatmodel_{}".format(args["model_template"])
+        llm_model = getattr(suspect_model, function_to_call)(args)
     else:
         raise ValueError("Invalid Model Type")
     
-    os.makedirs(args["answer_dir"], exist_ok=True)
+    os.makedirs(args["suspect_answer_dir"], exist_ok=True)
     
-    ### loop every batch of questions
+    # Loop every batch of questions
     for group_index in tqdm(range(data_group_num)):
         begin_index = group_index * args["inference_batch_size"]
         end_index = min(len(dataset), (group_index+1) * args["inference_batch_size"])
 
         exist_num = 0
         query_index_list = [dataset[i]["index"] for i in range(begin_index, end_index)]
-        ### check if answers have been already saved
-        if over_write == False:
+        # Check if answers have been already saved
+        if args["over_write"] == False:
             for data_index in query_index_list:
                 answer_exist_times = 0
                 for time_index in range(args["inference_times"]):
-                    if os.path.exists("{}/answer_{}_{}.pkl".format(args["answer_dir"], data_index, time_index)):
+                    if os.path.exists("{}/answer_{}_{}.pkl".format(args["suspect_answer_dir"], data_index, time_index)):
                         answer_exist_times += 1
                 if answer_exist_times == args["inference_times"]:
                     exist_num += 1
@@ -59,7 +55,7 @@ def generate_answers(args, over_write=False):
 
         raw_prompt_list = list()
         
-        ### preprocess prompt
+        # Preprocess prompt
         for data_index in range(begin_index, end_index):
             data = dataset[data_index]
             format_data = [
@@ -80,7 +76,7 @@ def generate_answers(args, over_write=False):
                     input_prompt = system_message + " " + user_prompt
                 pipeline_prompt_list.append(input_prompt)
             
-            # inference multiple times
+            # Inference multiple times
             for time_index in range(args["inference_times"]):
                 if args["do_sample"] == True:
                     responses = pipe(pipeline_prompt_list, max_new_tokens=128, do_sample=True, temperature=args["temperature"])
@@ -93,7 +89,6 @@ def generate_answers(args, over_write=False):
         elif args["model_type"] == "kernel":
             prompts = llm_model.preprocess_prompt(raw_prompt_list)
 
-            # inference multiple times
             for time_index in range(args["inference_times"]):
                 responses = llm_model.generate_response(prompts)
                 if args["split_symbol"] != None:
@@ -104,15 +99,15 @@ def generate_answers(args, over_write=False):
                 else:
                     answers[time_index] = responses
         
-        # save answers
+        # Save answers
         for i in range(len(query_index_list)):
             for j in range(args["inference_times"]):
-                with open("{}/answer_{}_{}.pkl".format(args["answer_dir"], query_index_list[i], j), "wb") as file:
+                with open("{}/answer_{}_{}.pkl".format(args["suspect_answer_dir"], query_index_list[i], j), "wb") as file:
                     pickle.dump(answers[j][i], file)
 
 
 if __name__ == '__main__':
-    with open(os.path.join("../setting", "qa_config.yaml"), 'r') as file:
+    with open(os.path.join("../setting", "suspect_config.yaml"), 'r') as file:
         global_cfg = yaml.safe_load(file)
     global_cfg = {
         key: (value.format(dataset_alias=global_cfg["dataset_alias"], metric=global_cfg["metric"], model_name=global_cfg["model_name"]) if isinstance(value, str) else value)
