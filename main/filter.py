@@ -97,6 +97,7 @@ def filter_by_bert(args, dataset, bare_dirs, finetune_dirs):
         if not keep:
             tainted_indices.append(entry["index"])
 
+    print("Selected Tainted Samples: ", len(tainted_indices))
     return tainted_indices
 
 

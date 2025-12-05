@@ -1,8 +1,8 @@
-dataset_alias: alpaca
+dataset_alias: dd15k
 
 seed_index: 42
 subset_size: 50000
-dataset_name: "tatsu-lab/alpaca"
+dataset_name: "databricks/databricks-dolly-15k"
 raw_dataset_path: "/scratch/general/vast/u1436024/datasets/raw/{dataset_alias}.pkl"
 general_dataset_path: "/scratch/general/vast/u1436024/datasets/original/general/{dataset_alias}.pkl"
 format_dataset_path: "/scratch/general/vast/u1436024/datasets/original/format/{dataset_alias}.jsonl"
@@ -12,4 +12,4 @@ partition_format_dataset_dir: "/scratch/general/vast/u1436024/datasets/subset/fo
 partition_ratio: [0.5, 0.5]
 
 tainted_sample_dir: "/scratch/general/vast/u1436024/datasets/original/samples/{dataset_alias}"
-action: "prepare_dataset"
+action: "get_subsets"

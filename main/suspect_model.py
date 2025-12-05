@@ -15,9 +15,9 @@ class model_base():
         encoded_inputs = self.tokenizer(prompt_list, padding=True, truncation=True, max_length=512, return_tensors='pt')
         encoded_inputs = {key: value.to("cuda") for key, value in encoded_inputs.items()}
         if self.args["do_sample"] == True:
-            generated_ids = self.model.generate(encoded_inputs, max_new_tokens=128, do_sample=True, temperature=self.args["temperature"])
+            generated_ids = self.model.generate(**encoded_inputs, max_new_tokens=128, do_sample=True, temperature=self.args["temperature"])
         else:
-            generated_ids = self.model.generate(encoded_inputs, max_new_tokens=128)
+            generated_ids = self.model.generate(**encoded_inputs, max_new_tokens=128)
         responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
         return responses

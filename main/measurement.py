@@ -5,8 +5,6 @@ import evaluate
 import yaml
 
 from tqdm import tqdm
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 
 def get_leaf_folders(folder):
@@ -28,20 +26,20 @@ def get_leaf_folders(folder):
 
 def prepare_paths(args):
     bare_answer_dirs = [
-        args["bare_prediction_dir"].format(
+        args["bare_answer_dir"].format(
             model_alias=bare_model, dataset_alias=args["dataset_alias"]
         )
-        for bare_model in args["filter_bare_list"]
+        for bare_model in args["bare_model_list"]
     ]
 
     finetune_answer_dirs = {
         bare_model: [
-            args["finetune_prediction_dir"].format(
+            args["finetune_answer_dir"].format(
                 model_alias=finetune_model, dataset_alias=args["dataset_alias"]
             )
-            for finetune_model in args["filter_finetune_list"][bare_model]
+            for finetune_model in args["finetune_model_list"][bare_model]
         ]
-        for bare_model in args["filter_bare_list"]
+        for bare_model in args["bare_model_list"]
     }
     return bare_answer_dirs, finetune_answer_dirs
 
@@ -51,10 +49,10 @@ def get_model_indices(args):
     finetune_model_index = []
     model_index = 0
 
-    for bare_model in args["filter_bare_list"]:
+    for bare_model in args["bare_model_list"]:
         bare_model_index.append(model_index)
         finetune_indices = list(
-            range(model_index + 1, model_index + 1 + len(args["filter_finetune_list"][bare_model]))
+            range(model_index + 1, model_index + 1 + len(args["finetune_model_list"][bare_model]))
         )
         finetune_model_index.append(finetune_indices)
         model_index += len(finetune_indices) + 1
@@ -82,17 +80,17 @@ def compare_answers(args):
             for answer_index in tqdm(range(len(sample_index))):
                 # Load answers from reference models and suspect models
                 for time_index in range(args["inference_times"]):
-                    with open("{}/answer_{}.pkl".format(suspect_answer_dir, sample_index[answer_index]), "rb") as answer_file:
+                    with open("{}/answer_{}_{}.pkl".format(suspect_answer_dir, sample_index[answer_index], time_index), "rb") as answer_file:
                         suspect_answer = pickle.load(answer_file)
                         suspect_answer_list[time_index].append(suspect_answer)
 
-                for i in range(len(args["filter_bare_list"])):
+                for i in range(len(args["bare_model_list"])):
                     with open("{}/answer_{}.pkl".format(bare_answer_dirs[i], sample_index[answer_index]), "rb") as answer_file:
                         bare_answer = pickle.load(answer_file)
                         reference_answer_list[bare_model_index[i]].append(bare_answer)
                 
-                    for j in range(len(args["filter_finetune_list"][args["filter_bare_list"][i]])):
-                        with open("{}/answer_{}.pkl".format(finetune_answer_dirs[args["filter_bare_list"][i]][j], sample_index[answer_index]), "rb") as answer_file:
+                    for j in range(len(args["finetune_model_list"][args["bare_model_list"][i]])):
+                        with open("{}/answer_{}.pkl".format(finetune_answer_dirs[args["bare_model_list"][i]][j], sample_index[answer_index]), "rb") as answer_file:
                             finetuned_answer = pickle.load(answer_file)
                             reference_answer_list[finetune_model_index[i][j]].append(finetuned_answer)
             
@@ -113,7 +111,7 @@ def compare_answers(args):
                             best_simi_with_finetune = max(best_simi_with_finetune, bert_results[time_index][finetune_model_index[i][j]]['f1'][answer_index])
                     similarity_scores[i, answer_index] = best_simi_with_bare
                     similarity_scores[i+reference_model_num, answer_index] = best_simi_with_finetune
-            torch.save(similarity_scores, "{}/BERT_scores.pt".format(suspect_answer_dir))
+            torch.save(similarity_scores, "{}/bert_scores.pt".format(suspect_answer_dir))
         else:
             raise ValueError("Invalid metric")
 
@@ -138,7 +136,7 @@ def threshold_answers(args):
             nonmem_simi_list = similarity_scores[:reference_model_num, j].tolist()
             mem_simi_list = similarity_scores[reference_model_num:, j].tolist()
             
-            if all((x - y) > args["similarity_threshold"] for x, y in zip(mem_simi_list, nonmem_simi_list)):
+            if all((x - y) > args["metric_threshold"] for x, y in zip(mem_simi_list, nonmem_simi_list)):
                 mem_answer_num += 1
                 mem_answer_index.append(j)
             else:

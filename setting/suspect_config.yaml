@@ -1,0 +1,17 @@
+dataset_alias: dd15k
+
+general_dataset_path: "/scratch/general/vast/u1436024/datasets/original/general/{dataset_alias}.pkl"
+tainted_sample_path: "/scratch/general/vast/u1436024/datasets/original/sample/{dataset_alias}_{metric}.pkl"
+model_type: "pipeline"
+pipeline_prefix: null
+model_template: 5
+model_name: "databricks/dolly-v2-3b"
+inference_batch_size: 4
+inference_times: 3
+do_sample: True
+temperature: 1.0
+split_symbol: "<|assistant|>\n"
+suspect_answer_dir: "/scratch/general/vast/u1436024/answers/suspect/{dataset_alias}/{model_name}"
+over_write: False
+seed_index: 42
+metric: "bert"

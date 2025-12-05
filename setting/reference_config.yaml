@@ -21,12 +21,12 @@ task_type: "CAUSAL_LM"
 per_device_train_batch_size: 8
 gradient_accumulation_steps: 1
 optim: "paged_adamw_8bit"
-num_train_epochs: 3.0
+num_train_epochs: 1.0
 save_strategy: "epoch"
 learning_rate: 1e-4
 
 bare_prediction_dir: "/scratch/general/vast/u1436024/answers/reference/original/bare/{model_alias}/{dataset_alias}"
 finetune_prediction_dir: "/scratch/general/vast/u1436024/answers/reference/original/finetune/{model_alias}/{dataset_alias}"
 bare_split_mark: "[/INST]"   # "[/INST]" for mistral, "model\n" for gemma, "assistant\n" for llama and qwen, "question" for glm, "question"
-prediction_batch_size: 64
-prediction_overwrite: True
+prediction_batch_size: 128
+prediction_overwrite: False
