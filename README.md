@@ -1,1 +1,3 @@
-*** This repo is for the paper "Blackbox Dataset Inference for LLM". ***
+# Blackbox Dataset Inference for LLM
+
+***Paper title: Blackbox Dataset Inference for LLM***
