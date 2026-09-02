@@ -46,6 +46,7 @@ Variables in the config files can be easily understood by their names.
 
 ## Results Viewing
 After running filter.py, we can know the number of selected tainted samples.
+
 After running measurement.py, we can konw the predictions of suspect models by the proposed method.
 
 ## Citation
