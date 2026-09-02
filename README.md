@@ -16,8 +16,6 @@ Graphics card: NVIDIA RTX A6000
 
 RAM: 128GB
 
-CUDA version: 11.8
-
 You need to install some third-party libraries with the following command:
 
 ```
