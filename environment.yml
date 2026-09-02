@@ -1,0 +1,6 @@
+name: LLM
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+prefix: /uufs/chpc.utah.edu/common/home/u1436024/software/pkg/miniconda3/envs/LLM
