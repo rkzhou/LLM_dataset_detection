@@ -2,7 +2,7 @@
 
 ***Paper title: Blackbox Dataset Inference for LLM***
 
-This paper was pre-printed in Arxiv. 
+
 
 This repo contains code that allows you to reproduce experiments presented in the paper.
 
@@ -47,11 +47,4 @@ After running filter.py, we can know the number of selected tainted samples.
 
 After running measurement.py, we can konw the predictions of suspect models by the proposed method.
 
-## Citation
-If you find several components of this work useful or want to use this code in your research, please cite the following paper:
-@article{zhou2025blackbox,\
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;title={Blackbox dataset inference for LLM},\
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;author={Zhou, Ruikai and Yang, Kang and Chen, Xun and Wang, Wendy Hui and Tao, Guanhong and Xu, Jun},\
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;journal={arXiv preprint arXiv:2507.03619},\
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;year={2025}\
-}
+
