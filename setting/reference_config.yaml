@@ -1,7 +1,7 @@
 dataset_alias: dd15k
 model_alias: mistral
 
-input_dataset_path: "/scratch/general/vast/u1436024/datasets/original/general/{dataset_alias}.pkl"
+input_dataset_path: "../datasets/original/general/{dataset_alias}.pkl"
 tainted_sample_dir: null
 tainted_sample_type: "bert"
 tainted_sample_threshold: 0.3
@@ -12,7 +12,7 @@ model_action: "predict"
 finetune_method: "lora"
 continue_train: False
 model_checkpoint: "checkpoint-final"
-model_output_dir: "/scratch/general/vast/u1436024/models/reference/original/{model_alias}/{dataset_alias}"
+model_output_dir: "../models/reference/original/{model_alias}/{dataset_alias}"
 r: 8
 lora_alpha: 32
 lora_dropout: 0.05
@@ -25,8 +25,8 @@ num_train_epochs: 1.0
 save_strategy: "epoch"
 learning_rate: 1e-4
 
-bare_prediction_dir: "/scratch/general/vast/u1436024/answers/reference/original/bare/{model_alias}/{dataset_alias}"
-finetune_prediction_dir: "/scratch/general/vast/u1436024/answers/reference/original/finetune/{model_alias}/{dataset_alias}"
+bare_prediction_dir: "../answers/reference/original/bare/{model_alias}/{dataset_alias}"
+finetune_prediction_dir: "../answers/reference/original/finetune/{model_alias}/{dataset_alias}"
 bare_split_mark: "[/INST]"   # "[/INST]" for mistral, "model\n" for gemma, "assistant\n" for llama and qwen, "question" for glm, "question"
 prediction_batch_size: 128
 prediction_overwrite: False
