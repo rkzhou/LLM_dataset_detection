@@ -65,7 +65,7 @@ Note: the duplicated name of variables in different config files have the same m
 Other variables in the config files can be easily understood by their names.
 
 
-### Run:
+## Run:
 To go through the completed process of the proposed method, you have to run the following python scripts in order:
 1. dataset.py: preprocess target datasets
 2. reference.py: fine-tune and inference reference models
